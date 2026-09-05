@@ -20,8 +20,10 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK 35
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Install Android SDK
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager "platforms;android-36" "system-images;android-36;google_apis;x86_64" "emulator"
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
@@ -34,7 +36,32 @@ jobs:
       - name: Rename APK
         run: cp app/build/outputs/apk/debug/app-debug.apk TaimaninRPGXViewer.apk
 
+      - name: Android 16 launch smoke test
+        shell: bash
+        run: |
+          echo no | avdmanager create avd -n api36test -k "system-images;android-36;google_apis;x86_64" --force
+          nohup emulator -avd api36test -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > /tmp/emulator.log 2>&1 &
+          adb wait-for-device
+          for i in $(seq 1 120); do
+            if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then break; fi
+            sleep 2
+          done
+          adb install -r TaimaninRPGXViewer.apk
+          adb logcat -c
+          set +e
+          adb shell am start -W -n com.example.taimaninviewer/.MainActivity
+          START_RC=$?
+          sleep 4
+          echo "===== TOP ACTIVITY ====="
+          adb shell dumpsys activity activities | grep -E "mResumedActivity|topResumedActivity|com.example.taimaninviewer" | head -50 || true
+          echo "===== ANDROIDRUNTIME ====="
+          adb logcat -d -v time AndroidRuntime:E '*:S' || true
+          echo "===== APP LOGS ====="
+          adb logcat -d -v time | grep -i -E "taimaninviewer|FATAL EXCEPTION|ActivityTaskManager" | tail -200 || true
+          exit $START_RC
+
       - name: Upload APK
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: TaimaninRPGXViewer-APK
