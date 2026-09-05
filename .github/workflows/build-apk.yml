@@ -32,10 +32,10 @@ jobs:
         run: gradle :app:assembleDebug --no-daemon
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk TaimaninRPGXViewer-v0.5.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk TaimaninRPGXViewer-v0.6.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TaimaninRPGXViewer-v0.5-APK
-          path: TaimaninRPGXViewer-v0.5.apk
+          name: TaimaninRPGXViewer-v0.6-APK
+          path: TaimaninRPGXViewer-v0.6.apk
