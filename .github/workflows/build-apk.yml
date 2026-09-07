@@ -28,6 +28,9 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Restore exact Touch Addon part
+        run: cat touch_parts/touch2a.txt touch_parts/touch2b.txt > touch_parts/touch2.txt
+
       - name: Apply v0.9.6 Recovery source patch
         run: python3 patch_v083.py
 
