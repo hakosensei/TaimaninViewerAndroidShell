@@ -28,20 +28,20 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Restore exact Touch Addon part
-        run: cat touch_parts/touch2a.txt touch_parts/touch2b.txt > touch_parts/touch2.txt
-
-      - name: Apply v0.9.6 Recovery source patch
+      - name: Apply v0.9.6 stable Android shell patch
         run: python3 patch_v083.py
+
+      - name: Apply Mobile v1.0.3 native bridge and input gate
+        run: python3 patch_mobile_v103.py
 
       - name: Build installable debug APK
         run: gradle :app:assembleDebug --no-daemon
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk TaimaninRPGXViewer-v0.9.6-Recovery.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk TaimaninRPGXViewer-Mobile-v1.0.3.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TaimaninRPGXViewer-v0.9.6-Recovery-APK
-          path: TaimaninRPGXViewer-v0.9.6-Recovery.apk
+          name: TaimaninRPGXViewer-Mobile-v1.0.3-APK
+          path: TaimaninRPGXViewer-Mobile-v1.0.3.apk
