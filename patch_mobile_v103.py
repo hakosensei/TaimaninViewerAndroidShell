@@ -1,4 +1,5 @@
 from pathlib import Path
+import base64, gzip
 
 SRC=Path('app/src/main/java/com/example/taimaninviewer/DirectFileViewerActivityV81.kt')
 s=SRC.read_text(encoding='utf-8')
@@ -12,13 +13,11 @@ def rep(old,new,label,count=1):
 s=s.replace('v0.9.6 Recovery · HyperOS 稳定恢复版','v1.0.3 Mobile · 原生翻译桥 / 输入隔离版')
 s=s.replace('APP: v0.9.6 Recovery','APP: v1.0.3 Mobile')
 s=s.replace('MODE: clean stable activity + post-launch landscape + immersive bars + Touch Addon',
-            'MODE: Mobile v1.0.3 + native TokenHub bridge + strict input gate + keep-screen-on')
+            'MODE: Mobile v1.0.3 + native TokenHub bridge + strict input gate')
 
 # Native bridge imports
 rep('import android.webkit.WebViewClient\n',
     'import android.webkit.WebViewClient\nimport android.webkit.JavascriptInterface\n', 'JavascriptInterface import')
-rep('import android.view.View\n',
-    'import android.view.View\nimport android.view.WindowManager\n', 'WindowManager import')
 rep('import org.json.JSONTokener\n',
     'import org.json.JSONTokener\nimport org.json.JSONObject\n', 'JSONObject import')
 rep('import java.net.InetAddress\n',
@@ -82,17 +81,6 @@ bridge=r'''    private inner class NativeBridge {
                     try { ww.evaluateJavascript(js, null) } catch (_: Throwable) {}
                 }
             }
-        }
-
-        @JavascriptInterface
-        fun setKeepScreenOn(enabled: Boolean): Boolean {
-            mainHandler.post {
-                try {
-                    if (enabled) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                    else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                } catch (_: Throwable) {}
-            }
-            return true
         }
     }
 
@@ -171,3 +159,10 @@ rep(server_anchor,server_repl,'index input gate')
 
 SRC.write_text(s,encoding='utf-8')
 print('Patched v0.9.6 Recovery source -> Mobile v1.0.3 native bridge/input gate')
+
+# Replace the Recovery touch addon with the fully integrated Mobile v1.0.3 addon.
+parts=[Path(f"mobile_v103/touch{i}.txt").read_text(encoding="ascii").strip() for i in range(1,5)]
+asset=Path("app/src/main/assets/touch_addon.js")
+asset.parent.mkdir(parents=True,exist_ok=True)
+asset.write_bytes(gzip.decompress(base64.b64decode("".join(parts))))
+print("Installed Mobile v1.0.3 touch addon asset")
