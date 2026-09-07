@@ -28,17 +28,17 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Patch Android page-number submit handling
+      - name: Apply v0.9.6 Recovery source patch
         run: python3 patch_v083.py
 
       - name: Build installable debug APK
         run: gradle :app:assembleDebug --no-daemon
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk TaimaninRPGXViewer-v0.8.3.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk TaimaninRPGXViewer-v0.9.6-Recovery.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TaimaninRPGXViewer-v0.8.3-APK
-          path: TaimaninRPGXViewer-v0.8.3.apk
+          name: TaimaninRPGXViewer-v0.9.6-Recovery-APK
+          path: TaimaninRPGXViewer-v0.9.6-Recovery.apk

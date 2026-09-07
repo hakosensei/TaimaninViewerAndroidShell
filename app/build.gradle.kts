@@ -8,11 +8,11 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.taimaninviewer"
+        applicationId = "com.example.taimaninviewer.recovery096"
         minSdk = 23
         targetSdk = 35
-        versionCode = 12
-        versionName = "0.8.3"
+        versionCode = 96
+        versionName = "0.9.6"
     }
 
     signingConfigs {
