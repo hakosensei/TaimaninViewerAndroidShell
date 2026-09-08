@@ -46,6 +46,9 @@ jobs:
       - name: Apply Mobile formal V1.0 response/cache/audio optimization
         run: python3 patch_mobile_v108_final.py
 
+      - name: Repair literal JavaScript regex escaping
+        run: python3 patch_mobile_v108_jsfix.py
+
       - name: Validate embedded addon JavaScript
         run: node --check app/src/main/assets/touch_addon.js
 
