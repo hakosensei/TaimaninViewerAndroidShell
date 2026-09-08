@@ -41,7 +41,7 @@ jobs:
         run: python3 patch_mobile_v104.py
 
       - name: Apply Mobile v1.0.6 Plus cloud glossary translation
-        run: python3 patch_mobile_v106_plus_cloud.py
+        run: python3 patch_mobile_v106_plus_cloud_chunks.py
 
       - name: Build installable debug APK
         run: gradle :app:assembleDebug --no-daemon
