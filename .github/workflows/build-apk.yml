@@ -43,14 +43,20 @@ jobs:
       - name: Apply Mobile v1.0.7 hybrid translation sync
         run: python3 patch_mobile_v107_hybrid.py
 
-      - name: Build installable debug APK
+      - name: Apply Mobile formal V1.0 response/cache/audio optimization
+        run: python3 patch_mobile_v108_final.py
+
+      - name: Validate embedded addon JavaScript
+        run: node --check app/src/main/assets/touch_addon.js
+
+      - name: Build installable Android 16 APK
         run: gradle :app:assembleDebug --no-daemon
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk TaimaninRPGXViewer-Mobile-v1.0.7-Hybrid-Android16.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk TaimaninRPGXViewer-Mobile-V1.0-Android16.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TaimaninRPGXViewer-Mobile-v1.0.7-Hybrid-Android16-APK
-          path: TaimaninRPGXViewer-Mobile-v1.0.7-Hybrid-Android16.apk
+          name: TaimaninRPGXViewer-Mobile-V1.0-Android16-APK
+          path: TaimaninRPGXViewer-Mobile-V1.0-Android16.apk
