@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.taimaninviewer.mobilev1000"
         minSdk = 23
         targetSdk = 35
-        versionCode = 103
-        versionName = "1.0.3"
+        versionCode = 104
+        versionName = "1.0.4"
     }
 
     signingConfigs {
