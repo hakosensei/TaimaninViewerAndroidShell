@@ -37,14 +37,17 @@ jobs:
       - name: Apply Mobile v1.0.3 native bridge and input gate
         run: python3 patch_mobile_v103.py
 
+      - name: Apply Mobile v1.0.4 translation proxy and durable cache
+        run: python3 patch_mobile_v104.py
+
       - name: Build installable debug APK
         run: gradle :app:assembleDebug --no-daemon
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk TaimaninRPGXViewer-Mobile-v1.0.3.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk TaimaninRPGXViewer-Mobile-v1.0.4-NativeTranslation.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TaimaninRPGXViewer-Mobile-v1.0.3-APK
-          path: TaimaninRPGXViewer-Mobile-v1.0.3.apk
+          name: TaimaninRPGXViewer-Mobile-v1.0.4-NativeTranslation-APK
+          path: TaimaninRPGXViewer-Mobile-v1.0.4-NativeTranslation.apk
