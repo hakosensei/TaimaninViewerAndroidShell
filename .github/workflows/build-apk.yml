@@ -49,6 +49,9 @@ jobs:
       - name: Repair literal JavaScript regex escaping
         run: python3 patch_mobile_v108_jsfix.py
 
+      - name: Preserve warning/error colors
+        run: python3 patch_mobile_v108_uifix.py
+
       - name: Validate embedded addon JavaScript
         run: node --check app/src/main/assets/touch_addon.js
 
