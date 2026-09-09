@@ -55,6 +55,9 @@ jobs:
       - name: Apply Mobile V1.1 PC translation sync
         run: python3 patch_mobile_v110_pc_translation_sync.py
 
+      - name: Apply Mobile V1.1.1 automatic translation scheduler fix
+        run: python3 patch_mobile_v111_auto_scheduler.py
+
       - name: Validate embedded addon JavaScript
         run: node --check app/src/main/assets/touch_addon.js
 
@@ -62,10 +65,10 @@ jobs:
         run: gradle :app:assembleDebug --no-daemon
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk TaimaninRPGXViewer-Mobile-V1.1-Android16.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk TaimaninRPGXViewer-Mobile-V1.1.1-Android16.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TaimaninRPGXViewer-Mobile-V1.1-Android16-APK
-          path: TaimaninRPGXViewer-Mobile-V1.1-Android16.apk
+          name: TaimaninRPGXViewer-Mobile-V1.1.1-Android16-APK
+          path: TaimaninRPGXViewer-Mobile-V1.1.1-Android16.apk
