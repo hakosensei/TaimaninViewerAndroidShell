@@ -164,8 +164,8 @@ rep("MTR.autoBlocked=new Set();MTR.manualRev=new Map();trClearRollback();trScene
 a=a.replace('Taimanin 外挂 · V1.1.2','Taimanin 外挂 · V1.1.3')
 a=a.replace('后台：未进入 Scene · 自动 Pro 守护与手动翻译完全解耦','后台：未进入 Scene · Pro自动当前句 / Pro后台 / 手动翻译三通道完全独立')
 
-# --- Native network split: V1.1.2 had ONE single-thread executor for every model request. ---
-old_exec = '''    private val translationExecutor: ExecutorService = Executors.newSingleThreadExecutor { r ->
+# --- Native network split: V1.1.2 uses one shared 3-worker pool for every model request. ---
+old_exec = '''    private val translationExecutor: ExecutorService = Executors.newFixedThreadPool(3) { r ->
         Thread(r, "taimanin-translation-http").apply { isDaemon = true }
     }
 '''
@@ -180,7 +180,7 @@ new_exec = '''    private val translationAutoExecutor: ExecutorService = Executo
     }
 '''
 if old_exec not in s:
-    raise SystemExit('native single translation executor marker missing')
+    raise SystemExit('native shared translation executor marker missing')
 s=s.replace(old_exec,new_exec,1)
 
 old_post = '''        @JavascriptInterface
@@ -237,7 +237,7 @@ for m in [
 for m in ['translationAutoExecutor','translationBackgroundExecutor','translationManualExecutor','postJsonAsync(id,abs,lane']:
     if m not in s: raise SystemExit('missing native V1.1.3 marker '+m)
 if 'translationExecutor.execute' in s:
-    raise SystemExit('legacy single translation executor is still used')
+    raise SystemExit('legacy shared translation executor is still used')
 if 'versionCode = 113' not in g or 'versionName = "1.1.3"' not in g:
     raise SystemExit('Gradle V1.1.3 update failed')
 
