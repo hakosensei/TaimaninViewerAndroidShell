@@ -17,6 +17,9 @@ final class VrRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFrame
         void onVideoSurfaceDestroyed(Surface surface);
     }
 
+    // vTexCoord intentionally uses image coordinates: (0,0) is top-left.
+    // SurfaceTexture's transform matrix expects GL texture coordinates instead, so
+    // the fragment shader converts image-Y to GL-Y exactly once before uTexMatrix.
     private static final float[] QUAD = {
             -1f,-1f,0f,1f,  1f,-1f,1f,1f,
             -1f, 1f,0f,0f,  1f, 1f,1f,0f
@@ -29,7 +32,7 @@ final class VrRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFrame
 
     private int textureId, program, aPos, aUv;
     private int uTex,uTexMatrix,uProjection,uStereo,uEye,uAspect,uViewFov;
-    private int uYaw,uPitch,uRoll,uFishFov,uFishCenter,uFishRadius,uFishScale,uFishK,uDualLayout,uDualSwap;
+    private int uYaw,uPitch,uRoll,uFishFov,uFishCenter,uFishRadius,uFishScale,uFishK,uDualLayout,uDualSwap,uFlipX,uFlipY;
     private SurfaceTexture surfaceTexture;
     private Surface videoSurface;
     private volatile ProjectionSettings settings = new ProjectionSettings();
@@ -72,6 +75,8 @@ final class VrRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFrame
         uFishK=GLES20.glGetUniformLocation(program,"uFishK");
         uDualLayout=GLES20.glGetUniformLocation(program,"uDualLayout");
         uDualSwap=GLES20.glGetUniformLocation(program,"uDualSwap");
+        uFlipX=GLES20.glGetUniformLocation(program,"uFlipX");
+        uFlipY=GLES20.glGetUniformLocation(program,"uFlipY");
         GLES20.glClearColor(0f,0f,0f,1f);
         if(listener!=null) listener.onVideoSurfaceReady(videoSurface);
     }
@@ -107,6 +112,8 @@ final class VrRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFrame
         GLES20.glUniform3f(uFishK,s.fishK1,s.fishK2,s.fishK3);
         GLES20.glUniform1i(uDualLayout,s.dualLensLayout);
         GLES20.glUniform1i(uDualSwap,s.dualLensSwap?1:0);
+        GLES20.glUniform1i(uFlipX,s.sourceFlipX?1:0);
+        GLES20.glUniform1i(uFlipY,s.sourceFlipY?1:0);
         quad.position(0); GLES20.glEnableVertexAttribArray(aPos); GLES20.glVertexAttribPointer(aPos,2,GLES20.GL_FLOAT,false,16,quad);
         quad.position(2); GLES20.glEnableVertexAttribArray(aUv); GLES20.glVertexAttribPointer(aUv,2,GLES20.GL_FLOAT,false,16,quad);
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP,0,4);
@@ -152,7 +159,7 @@ final class VrRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFrame
             "#extension GL_OES_EGL_image_external : require\n"+
             "precision highp float;\n"+
             "uniform samplerExternalOES uTexture;uniform mat4 uTexMatrix;\n"+
-            "uniform int uProjection;uniform int uStereo;uniform int uEye;\n"+
+            "uniform int uProjection;uniform int uStereo;uniform int uEye;uniform int uFlipX;uniform int uFlipY;\n"+
             "uniform float uAspect;uniform float uViewFovDeg;uniform float uYawDeg;uniform float uPitchDeg;uniform float uRollDeg;\n"+
             "uniform float uFishFovDeg;uniform vec2 uFishCenter;uniform float uFishRadius;uniform vec2 uFishScale;uniform vec3 uFishK;\n"+
             "uniform int uDualLayout;uniform int uDualSwap;varying vec2 vTexCoord;const float PI=3.14159265358979323846;\n"+
@@ -164,5 +171,5 @@ final class VrRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFrame
             "vec2 fish(vec3 d,out float ok){float th=acos(clamp(d.z,-1.0,1.0));float m=rad(uFishFovDeg*0.5);if(th>m){ok=0.0;return vec2(0.0);}float st=sin(th);vec2 q=st<0.00001?vec2(0.0):vec2(d.x,d.y)/st;float r=th/max(m,0.00001);float r2=r*r;float rc=r*(1.0+uFishK.x*r2+uFishK.y*r2*r2+uFishK.z*r2*r2*r2);vec2 uv=uFishCenter+vec2(q.x*uFishScale.x,-q.y*uFishScale.y)*(uFishRadius*rc);if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0)ok=0.0;return uv;}\n"+
             "vec2 cubeFace(vec3 d,bool eac,out float face){vec3 a=abs(d);float u=0.0,v=0.0;if(a.x>=a.y&&a.x>=a.z){if(d.x>0.0){face=0.0;u=-d.z/a.x;v=d.y/a.x;}else{face=1.0;u=d.z/a.x;v=d.y/a.x;}}else if(a.y>=a.x&&a.y>=a.z){if(d.y>0.0){face=2.0;u=d.x/a.y;v=-d.z/a.y;}else{face=3.0;u=d.x/a.y;v=d.z/a.y;}}else{if(d.z>0.0){face=4.0;u=d.x/a.z;v=d.y/a.z;}else{face=5.0;u=-d.x/a.z;v=d.y/a.z;}}if(eac){u=atan(u)/(PI*0.25);v=atan(v)/(PI*0.25);}return vec2((u+1.0)*0.5,(1.0-v)*0.5);}\n"+
             "vec2 cube(vec3 d,bool eac){float face;vec2 f=cubeFace(d,eac,face);float col=mod(face,3.0),row=floor(face/3.0);return(f+vec2(col,row))/vec2(3.0,2.0);}\n"+
-            "void main(){vec2 src;float ok=1.0;if(uProjection==1){src=stereo(vTexCoord);}else{float t=tan(rad(uViewFovDeg)*0.5);vec2 p=vec2((vTexCoord.x*2.0-1.0)*uAspect*t,(1.0-vTexCoord.y*2.0)*t);vec3 d=normalize(vec3(p,1.0));d=rz(d,rad(uRollDeg));d=rx(d,rad(uPitchDeg));d=ry(d,rad(uYawDeg));if(uProjection==2){float lon=atan(d.x,d.z),lat=asin(clamp(d.y,-1.0,1.0));if(abs(lon)>PI*0.5)ok=0.0;src=stereo(vec2(lon/PI+0.5,0.5-lat/PI));}else if(uProjection==3){float lon=atan(d.x,d.z),lat=asin(clamp(d.y,-1.0,1.0));src=stereo(vec2(lon/(2.0*PI)+0.5,0.5-lat/PI));}else if(uProjection==4){src=stereo(fish(d,ok));}else if(uProjection==5){bool back=d.z<0.0;vec3 q=back?vec3(-d.x,d.y,-d.z):d;vec2 fuv=fish(q,ok);int lens=back?1:0;if(uDualSwap==1)lens=1-lens;if(uDualLayout==0)src=vec2((fuv.x+float(lens))*0.5,fuv.y);else src=vec2(fuv.x,(fuv.y+float(lens))*0.5);}else if(uProjection==6){src=stereo(cube(d,false));}else if(uProjection==7){src=stereo(cube(d,true));}else{src=stereo(vTexCoord);}}if(ok<0.5||src.x<0.0||src.x>1.0||src.y<0.0||src.y>1.0){gl_FragColor=vec4(0.0,0.0,0.0,1.0);}else{vec2 tuv=(uTexMatrix*vec4(src,0.0,1.0)).xy;gl_FragColor=texture2D(uTexture,tuv);}}\n";
+            "void main(){vec2 src;float ok=1.0;if(uProjection==1){src=stereo(vTexCoord);}else{float t=tan(rad(uViewFovDeg)*0.5);vec2 p=vec2((vTexCoord.x*2.0-1.0)*uAspect*t,(1.0-vTexCoord.y*2.0)*t);vec3 d=normalize(vec3(p,1.0));d=rz(d,rad(uRollDeg));d=rx(d,rad(uPitchDeg));d=ry(d,rad(uYawDeg));if(uProjection==2){float lon=atan(d.x,d.z),lat=asin(clamp(d.y,-1.0,1.0));if(abs(lon)>PI*0.5)ok=0.0;src=stereo(vec2(lon/PI+0.5,0.5-lat/PI));}else if(uProjection==3){float lon=atan(d.x,d.z),lat=asin(clamp(d.y,-1.0,1.0));src=stereo(vec2(lon/(2.0*PI)+0.5,0.5-lat/PI));}else if(uProjection==4){src=stereo(fish(d,ok));}else if(uProjection==5){bool back=d.z<0.0;vec3 q=back?vec3(-d.x,d.y,-d.z):d;vec2 fuv=fish(q,ok);int lens=back?1:0;if(uDualSwap==1)lens=1-lens;if(uDualLayout==0)src=vec2((fuv.x+float(lens))*0.5,fuv.y);else src=vec2(fuv.x,(fuv.y+float(lens))*0.5);}else if(uProjection==6){src=stereo(cube(d,false));}else if(uProjection==7){src=stereo(cube(d,true));}else{src=stereo(vTexCoord);}}if(ok<0.5||src.x<0.0||src.x>1.0||src.y<0.0||src.y>1.0){gl_FragColor=vec4(0.0,0.0,0.0,1.0);}else{if(uFlipX==1)src.x=1.0-src.x;if(uFlipY==1)src.y=1.0-src.y;vec2 gluv=vec2(src.x,1.0-src.y);vec2 tuv=(uTexMatrix*vec4(gluv,0.0,1.0)).xy;gl_FragColor=texture2D(uTexture,tuv);}}\n";
 }
