@@ -19,15 +19,11 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
- * 轻量迅雷云盘协议客户端（个人实验用途）。
+ * Lightweight Xunlei cloud client.
  *
- * 登录流程同步到当前 AList Thunder 驱动：
- * 1) /xluser.core.login/v3/login 用账号密码换 sessionID；
- * 2) /v1/shield/captcha/init 初始化本次 signin/token 的验证码状态；
- * 3) /v1/auth/signin/token 用 sessionID 换 access_token / refresh_token；
- * 4) 后续优先用 refresh_token 恢复登录态。
- *
- * 这些接口不是迅雷面向第三方开发者承诺长期稳定的公开 SDK，未来迅雷升级时可能需要再次同步。
+ * Login flow mirrors the current OpenList/AList Thunder driver:
+ * core v3 login -> security review (when required) -> captcha init -> signin/token.
+ * Successful login persists refresh_token in SecureStore from MainActivity.
  */
 class XunleiApi {
     static final String API_BASE = "https://api-pan.xunlei.com/drive/v1";
@@ -35,7 +31,6 @@ class XunleiApi {
     static final String USER_API_BASE = "https://xluser-ssl.xunlei.com";
     static final String USER_API = USER_API_BASE + "/v1";
 
-    // 当前 AList 标准 Thunder 驱动使用的迅雷 Android 主程序身份。
     static final String CLIENT_ID = "Xp6vsxz_7IYVw2BB";
     static final String CLIENT_SECRET = "Xp6vsy4tN9toTVdMSpomVdXpRmES";
     static final String CLIENT_VERSION = "8.31.0.9726";
@@ -46,20 +41,19 @@ class XunleiApi {
     static final String DOWNLOAD_UA = "Dalvik/2.1.0 (Linux; U; Android 12; M2004J7AC Build/SP1A.210812.016)";
     static final String CORE_UA = "android-ok-http-client/xl-acc-sdk/version-5.0.12.512000";
     static final String SIGN_PROVIDER = "access_end_point_token";
-
-    // 当前主程序驱动根目录使用空 space，而不是旧 Browser 驱动的 SPACE_BROWSER。
     static final String ROOT_SPACE = "";
 
     static class VerificationRequiredException extends Exception {
         final String verifyUrl;
         VerificationRequiredException(String verifyUrl) {
             super("迅雷要求额外验证");
-            this.verifyUrl = verifyUrl;
+            this.verifyUrl = verifyUrl == null ? "" : verifyUrl;
         }
     }
 
     private Models.Token token;
     private String captchaToken = "";
+    private String creditKey = "";
     private String deviceId = "";
     private String userAgent = "";
     private String pendingSessionId = "";
@@ -73,35 +67,41 @@ class XunleiApi {
     Models.Token getToken() { return token; }
 
     Models.Token login(String username, String password) throws Exception {
-        // 设备 ID 不再依赖密码，避免改密码后被服务端识别成另一台设备。
         configureIdentity(md5("xunlei-vr-player|" + username));
-
-        // 1. 当前流程先通过 v3 core login 获取 sessionID。
-        pendingSessionId = coreLogin(username, password);
-        if (pendingSessionId.isBlank()) throw new Exception("迅雷 v3 登录没有返回 sessionID");
-
-        // 2. 为 signin/token 初始化 captcha 状态。
-        initCaptchaForSignin(username);
-
-        // 3. 用 sessionID 换正式 OAuth token。
-        return exchangeSessionForToken(pendingSessionId);
+        creditKey = "";
+        return loginAfterIdentity(username, password);
     }
 
-    /**
-     * 浏览器验证通过后，xlaccsdk01:// 回调会把 captcha_token 带回 APP。
-     * 保留前一步的 sessionID，直接继续 signin/token；若进程被 Android 回收，则重新执行 core login。
-     */
+    Models.Token completeSecurityReview(String username, String password, String trustedCreditKey) throws Exception {
+        if (deviceId == null || deviceId.isBlank()) {
+            configureIdentity(md5("xunlei-vr-player|" + username));
+        }
+        creditKey = trustedCreditKey == null ? "" : trustedCreditKey.trim();
+        if (creditKey.isBlank()) throw new Exception("短信验证没有返回 CreditKey");
+        Models.Token t = loginAfterIdentity(username, password);
+        creditKey = "";
+        return t;
+    }
+
+    private Models.Token loginAfterIdentity(String username, String password) throws Exception {
+        pendingSessionId = coreLogin(username, password);
+        if (pendingSessionId.isBlank()) throw new Exception("迅雷 v3 登录没有返回 sessionID");
+        initCaptchaForSignin(username);
+        Models.Token t = exchangeSessionForToken(pendingSessionId);
+        creditKey = "";
+        return t;
+    }
+
     Models.Token completeLogin(String username, String password, String callbackCaptchaToken) throws Exception {
         if (deviceId == null || deviceId.isBlank()) configureIdentity(md5("xunlei-vr-player|" + username));
         this.captchaToken = callbackCaptchaToken == null ? "" : callbackCaptchaToken;
-        if (pendingSessionId == null || pendingSessionId.isBlank()) {
-            pendingSessionId = coreLogin(username, password);
-        }
+        if (pendingSessionId == null || pendingSessionId.isBlank()) pendingSessionId = coreLogin(username, password);
         return exchangeSessionForToken(pendingSessionId);
     }
 
     Models.Token loginWithRefreshToken(String refreshToken, String persistedDeviceId) throws Exception {
-        configureIdentity((persistedDeviceId == null || persistedDeviceId.isBlank()) ? md5("xunlei-vr-player|" + refreshToken) : persistedDeviceId);
+        configureIdentity((persistedDeviceId == null || persistedDeviceId.isBlank())
+                ? md5("xunlei-vr-player|" + refreshToken) : persistedDeviceId);
         JSONObject body = new JSONObject();
         body.put("grant_type", "refresh_token");
         body.put("refresh_token", refreshToken);
@@ -132,7 +132,7 @@ class XunleiApi {
         body.put("deviceModel", "M2004J7AC");
         body.put("deviceName", "Xiaomi_M2004j7ac");
         body.put("OSVersion", "12");
-        body.put("creditkey", "");
+        body.put("creditkey", creditKey == null ? "" : creditKey);
         body.put("hl", "zh-CN");
         body.put("userName", username);
         body.put("passWord", password);
@@ -147,19 +147,18 @@ class XunleiApi {
         String errorDesc = firstNonBlank(o.optString("error_description", ""), o.optString("errorDesc", ""));
         String reviewUrl = o.optString("reviewurl", "");
 
-        // 某些账号/设备会触发短信或网页安全审核。
         if ("review_panel".equalsIgnoreCase(error) || !reviewUrl.isBlank()) {
             if (!reviewUrl.isBlank()) throw new VerificationRequiredException(reviewUrl);
-            throw new Exception("迅雷要求安全验证，请稍后重试登录");
+            throw new Exception("迅雷要求安全验证，但没有返回验证地址");
         }
-        if ((!error.isBlank() && !"success".equalsIgnoreCase(error)) || (!errorCode.isBlank() && !"0".equals(errorCode))) {
-            throw new Exception("迅雷登录失败" + (!errorCode.isBlank() ? " [" + errorCode + "]" : "") + ": " + firstNonBlank(errorDesc, error));
+        if ((!error.isBlank() && !"success".equalsIgnoreCase(error))
+                || (!errorCode.isBlank() && !"0".equals(errorCode))) {
+            throw new Exception("迅雷登录失败" + (!errorCode.isBlank() ? " [" + errorCode + "]" : "")
+                    + ": " + firstNonBlank(errorDesc, error));
         }
 
         String sessionId = o.optString("sessionID", "");
-        if (sessionId.isBlank()) {
-            throw new Exception("迅雷 v3 登录未返回 sessionID：" + compactError(o, o.toString()));
-        }
+        if (sessionId.isBlank()) throw new Exception("迅雷 v3 登录未返回 sessionID：" + compactError(o, o.toString()));
         return sessionId;
     }
 
@@ -242,7 +241,6 @@ class XunleiApi {
         JSONObject o = requestJson("GET", b.build().toString(), null, true, null, null);
         Models.CloudItem detail = Models.CloudItem.fromJson(o);
 
-        // 原始 web_content_link 优先，VR 片尽量避免云端转码降低分辨率；没有原始链接再退回 media URL。
         String url = detail.webContentLink;
         if (url == null || url.isBlank()) {
             for (String u : detail.mediaUrls) {
@@ -346,13 +344,8 @@ class XunleiApi {
         return v.length() == 32 ? v : md5(v);
     }
 
-    static String md5(String s) {
-        return digestHex("MD5", s == null ? "" : s);
-    }
-
-    static String sha1(String s) {
-        return digestHex("SHA-1", s == null ? "" : s);
-    }
+    static String md5(String s) { return digestHex("MD5", s == null ? "" : s); }
+    static String sha1(String s) { return digestHex("SHA-1", s == null ? "" : s); }
 
     private static String digestHex(String algorithm, String s) {
         try {

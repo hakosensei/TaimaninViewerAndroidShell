@@ -37,6 +37,7 @@ import java.util.concurrent.Executors;
  */
 public class MainActivity extends Activity {
     private static final int REQ_FILE = 2301;
+    private static final int REQ_XUNLEI_REVIEW = 2302;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Deque<FolderPos> stack = new ArrayDeque<>();
@@ -117,7 +118,7 @@ public class MainActivity extends Activity {
             showBusy("正在登录迅雷…");
             io.execute(()->{
                 try{Models.Token t=api.login(pendingUser,pendingPassword);saveSession(pendingUser,t);pendingPassword="";ui.post(this::showBrowserRoot);}
-                catch(XunleiApi.VerificationRequiredException e){ui.post(()->{showLogin();try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(e.verifyUrl)));}catch(Exception ex){toast("无法打开验证页："+ex.getMessage());}});}
+                catch(XunleiApi.VerificationRequiredException e){ui.post(()->handleVerificationRequired(e));}
                 catch(Exception e){ui.post(()->{toast("登录失败："+e.getMessage());showLogin();});}
             });
         });
@@ -156,7 +157,44 @@ public class MainActivity extends Activity {
 
     private void chooseAndPlayCloud(Models.CloudItem f){ProjectionSettings guess=ProjectionSettings.guess(f.name);ProjectionDialog.show(this,guess,s->{showBusy("正在获取迅雷播放地址…");io.execute(()->{try{Models.StreamLink link=api.getStreamLink(f);ui.post(()->PlayerActivity.start(this,link.url,link.userAgent,f.name,s));}catch(Exception e){ui.post(()->{toast("获取播放地址失败："+e.getMessage());loadCurrentFolder();});}});});}
 
-    @Override protected void onActivityResult(int req,int result,Intent data){super.onActivityResult(req,result,data);if(req==REQ_FILE&&result==RESULT_OK&&data!=null&&data.getData()!=null){Uri u=data.getData();try{getContentResolver().takePersistableUriPermission(u,data.getFlags()&(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION));}catch(Exception ignored){}String n=u.getLastPathSegment();ProjectionDialog.show(this,ProjectionSettings.guess(n),s->PlayerActivity.start(this,u.toString(),"",n,s));}}
+    @Override protected void onActivityResult(int req,int result,Intent data){
+        super.onActivityResult(req,result,data);
+        if(req==REQ_XUNLEI_REVIEW){
+            if(result!=RESULT_OK||data==null){toast("迅雷安全验证未完成");showLogin();return;}
+            String ck=data.getStringExtra(XunleiVerifyActivity.RESULT_CREDIT_KEY);
+            if(ck==null||ck.isBlank()||pendingUser.isBlank()||pendingPassword.isBlank()){toast("验证结果无效，请重新登录");showLogin();return;}
+            showBusy("短信验证成功，正在继续登录迅雷…");
+            io.execute(()->{
+                try{Models.Token t=api.completeSecurityReview(pendingUser,pendingPassword,ck);saveSession(pendingUser,t);pendingPassword="";ui.post(this::showBrowserRoot);}
+                catch(XunleiApi.VerificationRequiredException e){ui.post(()->handleVerificationRequired(e));}
+                catch(Exception e){ui.post(()->{toast("验证后登录失败："+e.getMessage());showLogin();});}
+            });
+            return;
+        }
+        if(req==REQ_FILE&&result==RESULT_OK&&data!=null&&data.getData()!=null){Uri u=data.getData();try{getContentResolver().takePersistableUriPermission(u,data.getFlags()&(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION));}catch(Exception ignored){}String n=u.getLastPathSegment();ProjectionDialog.show(this,ProjectionSettings.guess(n),s->PlayerActivity.start(this,u.toString(),"",n,s));}
+    }
+
+    private void handleVerificationRequired(XunleiApi.VerificationRequiredException e){
+        String u=e.verifyUrl==null?"":e.verifyUrl;
+        try{
+            Uri parsed=Uri.parse(u);
+            String ck=parsed.getQueryParameter("creditkey");
+            boolean review=u.contains("vertifyPhone.html") || (ck!=null&&!ck.isBlank());
+            if(review){
+                if(ck==null||ck.isBlank()){toast("迅雷要求短信验证，但没有返回 CreditKey");showLogin();return;}
+                String sign=XunleiApi.generateDeviceSign(api.getDeviceId(),XunleiApi.XL_PACKAGE);
+                String reviewUrl=u;
+                if(parsed.getQueryParameter("deviceid")==null) reviewUrl=parsed.buildUpon().appendQueryParameter("deviceid",sign).build().toString();
+                Intent i=new Intent(this,XunleiVerifyActivity.class);
+                i.putExtra(XunleiVerifyActivity.EXTRA_REVIEW_URL,reviewUrl);
+                i.putExtra(XunleiVerifyActivity.EXTRA_CREDIT_KEY,ck);
+                i.putExtra(XunleiVerifyActivity.EXTRA_DEVICE_SIGN,sign);
+                startActivityForResult(i,REQ_XUNLEI_REVIEW);
+                return;
+            }
+            startActivity(new Intent(Intent.ACTION_VIEW,parsed));
+        }catch(Exception ex){toast("无法打开迅雷验证："+ex.getMessage());showLogin();}
+    }
 
     private void showUrlDialog(){EditText e=edit("https://.../video.mp4 或 m3u8");new AlertDialog.Builder(this).setTitle("网络视频 URL").setView(e).setNegativeButton("取消",null).setPositiveButton("下一步",(d,w)->{String u=e.getText().toString().trim();if(!u.isBlank())ProjectionDialog.show(this,ProjectionSettings.guess(u),s->PlayerActivity.start(this,u,"",u,s));}).show();}
 
