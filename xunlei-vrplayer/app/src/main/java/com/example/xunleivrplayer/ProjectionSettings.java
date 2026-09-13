@@ -9,14 +9,14 @@ import java.util.Locale;
  * 例如同一个 180° ERP 可以是单目，也可以是 SBS-LR、SBS-RL、TB 或 BT。
  */
 final class ProjectionSettings {
-    static final int AUTO_METADATA = 0;      // Google/Media3 Spherical Video metadata / mesh
-    static final int FLAT = 1;               // 普通 2D
-    static final int ERP_180 = 2;            // 180° half-equirectangular
-    static final int ERP_360 = 3;            // 360° equirectangular
-    static final int FISHEYE = 4;            // 参数化鱼眼（180~220°及自定义）
-    static final int DUAL_FISHEYE_360 = 5;   // 原始双鱼眼 360，两只镜头拼成一个画面
-    static final int CUBEMAP_3X2 = 6;        // 3×2 标准 cubemap atlas
-    static final int EAC_3X2 = 7;            // 3×2 equi-angular cubemap
+    static final int AUTO_METADATA = 0;
+    static final int FLAT = 1;
+    static final int ERP_180 = 2;
+    static final int ERP_360 = 3;
+    static final int FISHEYE = 4;
+    static final int DUAL_FISHEYE_360 = 5;
+    static final int CUBEMAP_3X2 = 6;
+    static final int EAC_3X2 = 7;
 
     static final int MONO = 0;
     static final int SBS_LR = 1;
@@ -34,10 +34,8 @@ final class ProjectionSettings {
     int stereoLayout = SBS_LR;
     int eye = EYE_LEFT;
 
-    // 虚拟平面相机视场角。越小越像长焦，越大越像广角。
     float viewFovDeg = 85f;
 
-    // 鱼眼镜头参数。默认等距鱼眼；k1~k3 是可选径向修正。
     float fisheyeFovDeg = 180f;
     float fishCenterX = 0.5f;
     float fishCenterY = 0.5f;
@@ -48,12 +46,15 @@ final class ProjectionSettings {
     float fishK2 = 0f;
     float fishK3 = 0f;
 
-    // 片源安装姿态修正（度）。触摸视角是在此基础上叠加。
     float sourceYawDeg = 0f;
     float sourcePitchDeg = 0f;
     float sourceRollDeg = 0f;
 
-    // Raw dual-fisheye 360 的两只镜头在源帧中的排布。
+    // Manual image-space corrections.  Normal Android SurfaceTexture orientation is
+    // corrected automatically in VrRenderer; these are only for unusual source files.
+    boolean sourceFlipX = false;
+    boolean sourceFlipY = false;
+
     int dualLensLayout = DUAL_LENS_SBS;
     boolean dualLensSwap = false;
 
@@ -75,6 +76,8 @@ final class ProjectionSettings {
         x.sourceYawDeg = sourceYawDeg;
         x.sourcePitchDeg = sourcePitchDeg;
         x.sourceRollDeg = sourceRollDeg;
+        x.sourceFlipX = sourceFlipX;
+        x.sourceFlipY = sourceFlipY;
         x.dualLensLayout = dualLensLayout;
         x.dualLensSwap = dualLensSwap;
         return x;
@@ -112,7 +115,6 @@ final class ProjectionSettings {
         } else if (n.contains("360")) {
             s.projection = ERP_360;
         } else {
-            // 日本 VR 发行片源里 180° SBS 很常见，作为无标记视频的默认值。
             s.projection = ERP_180;
         }
 
@@ -151,6 +153,7 @@ final class ProjectionSettings {
             case BT: l = "BT"; break;
             default: l = "Mono";
         }
-        return p + " / " + l + (stereoLayout == MONO ? "" : (eye == EYE_LEFT ? " / L" : " / R"));
+        String flip = (sourceFlipX ? " / FlipX" : "") + (sourceFlipY ? " / FlipY" : "");
+        return p + " / " + l + (stereoLayout == MONO ? "" : (eye == EYE_LEFT ? " / L" : " / R")) + flip;
     }
 }
