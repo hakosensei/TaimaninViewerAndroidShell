@@ -5,6 +5,7 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 final class Models {
     private Models() {}
@@ -32,6 +33,55 @@ final class Models {
         }
     }
 
+    /** One Xunlei cloud-play/transcode variant from files/{id}.medias[]. */
+    static class MediaVariant {
+        String url = "";
+        String mediaName = "";
+        String resolutionName = "";
+        String videoCodec = "";
+        boolean origin;
+        boolean isDefault;
+        int priority;
+        int width;
+        int height;
+        int bitRate;
+
+        static MediaVariant fromJson(JSONObject o) {
+            MediaVariant v = new MediaVariant();
+            if (o == null) return v;
+            JSONObject link = o.optJSONObject("link");
+            if (link != null) v.url = link.optString("url", "");
+            v.mediaName = o.optString("media_name", "");
+            v.resolutionName = o.optString("resolution_name", "");
+            v.origin = o.optBoolean("is_origin", false);
+            v.isDefault = o.optBoolean("is_default", false);
+            v.priority = o.optInt("priority", 0);
+            JSONObject video = o.optJSONObject("video");
+            if (video != null) {
+                v.width = video.optInt("width", 0);
+                v.height = video.optInt("height", 0);
+                v.bitRate = video.optInt("bit_rate", 0);
+                v.videoCodec = video.optString("video_codec", "");
+            }
+            return v;
+        }
+
+        String label(int index) {
+            String q = firstNonBlank(resolutionName, mediaName);
+            if (q.isBlank() && height > 0) q = height + "p";
+            if (q.isBlank()) q = "云播线路 " + (index + 1);
+            StringBuilder s = new StringBuilder(q);
+            if (origin && !q.contains("原画")) s.append(" · 原画");
+            if (width > 0 && height > 0 && !q.contains(Integer.toString(height))) {
+                s.append(" · ").append(width).append('×').append(height);
+            }
+            if (bitRate > 0) {
+                s.append(String.format(Locale.ROOT, " · %.1f Mbps", bitRate / 1_000_000f));
+            }
+            return s.toString();
+        }
+    }
+
     static class CloudItem {
         String id;
         String parentId;
@@ -43,11 +93,12 @@ final class Models {
         String thumbnail;
         String webContentLink;
         final List<String> mediaUrls = new ArrayList<>();
+        final List<MediaVariant> mediaVariants = new ArrayList<>();
 
         boolean isDir() { return FOLDER_KIND.equals(kind); }
 
         boolean isVideo() {
-            String n = name == null ? "" : name.toLowerCase();
+            String n = name == null ? "" : name.toLowerCase(Locale.ROOT);
             return n.endsWith(".mp4") || n.endsWith(".mkv") || n.endsWith(".webm") ||
                     n.endsWith(".m4v") || n.endsWith(".mov") || n.endsWith(".ts") ||
                     n.endsWith(".avi");
@@ -73,10 +124,11 @@ final class Models {
                 for (int i = 0; i < medias.length(); i++) {
                     JSONObject m = medias.optJSONObject(i);
                     if (m == null) continue;
-                    JSONObject link = m.optJSONObject("link");
-                    if (link == null) continue;
-                    String u = link.optString("url", "");
-                    if (!u.isBlank()) f.mediaUrls.add(u);
+                    MediaVariant v = MediaVariant.fromJson(m);
+                    if (!v.url.isBlank()) {
+                        f.mediaVariants.add(v);
+                        f.mediaUrls.add(v.url);
+                    }
                 }
             }
             return f;
@@ -86,9 +138,30 @@ final class Models {
     static class StreamLink {
         final String url;
         final String userAgent;
+        final String label;
+        final boolean cloudPlay;
+        final int bitRate;
+        final int width;
+        final int height;
+
         StreamLink(String url, String userAgent) {
-            this.url = url;
-            this.userAgent = userAgent;
+            this(url, userAgent, "播放地址", false, 0, 0, 0);
         }
+
+        StreamLink(String url, String userAgent, String label, boolean cloudPlay,
+                   int bitRate, int width, int height) {
+            this.url = url == null ? "" : url;
+            this.userAgent = userAgent == null ? "" : userAgent;
+            this.label = label == null ? "播放地址" : label;
+            this.cloudPlay = cloudPlay;
+            this.bitRate = bitRate;
+            this.width = width;
+            this.height = height;
+        }
+    }
+
+    private static String firstNonBlank(String... values) {
+        if (values != null) for (String v : values) if (v != null && !v.isBlank()) return v;
+        return "";
     }
 }
