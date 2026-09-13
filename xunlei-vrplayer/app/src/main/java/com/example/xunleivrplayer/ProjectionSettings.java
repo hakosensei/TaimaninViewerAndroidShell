@@ -5,8 +5,11 @@ import java.util.Locale;
 /**
  * 播放器的投影参数。
  *
- * 这里故意把“投影方式”和“左右眼打包方式”分开：
- * 例如同一个 180° ERP 可以是单目，也可以是 SBS-LR、SBS-RL、TB 或 BT。
+ * 这里故意拆成三层：
+ * 1) 源视频投影几何（ERP / fisheye / cubemap...）
+ * 2) 立体打包与双目融合（取单眼 / 固定球壳 / 智能优势眼 / 局部视差）
+ * 3) 最终平面显示投影（普通透视 / 人眼宽视野 / Panini）
+ * 这样可以在同一片源上独立比较“左右眼问题”和“边缘拉伸问题”。
  */
 final class ProjectionSettings {
     static final int AUTO_METADATA = 0;
@@ -27,14 +30,35 @@ final class ProjectionSettings {
     static final int EYE_LEFT = 0;
     static final int EYE_RIGHT = 1;
 
+    // 双目处理。STEREO_EYE 使用 eye 字段选择左/右眼。
+    static final int STEREO_EYE = 0;
+    static final int STEREO_SHELL = 1;
+    static final int STEREO_SMART = 2;
+    static final int STEREO_DISPARITY = 3;
+
+    // 最终“虚拟相机 -> 手机平面”的显示投影。
+    static final int OUTPUT_RECTILINEAR = 0;
+    static final int OUTPUT_HUMAN_WIDE = 1;
+    static final int OUTPUT_PANINI = 2;
+
     static final int DUAL_LENS_SBS = 0;
     static final int DUAL_LENS_TB = 1;
 
     int projection = ERP_180;
     int stereoLayout = SBS_LR;
     int eye = EYE_LEFT;
+    int stereoViewMode = STEREO_EYE;
+    int outputProjection = OUTPUT_RECTILINEAR;
 
     float viewFovDeg = 85f;
+
+    // 双目实验参数。64 mm / 0.55 m 是一个温和的默认值；
+    // 它们只用于固定球壳、智能融合和局部视差模式。
+    float stereoIpdMm = 64f;
+    float shellDepthM = 0.55f;
+    float disparityRange = 0.06f;   // 眼内归一化 UV，局部搜索半范围
+    float smartThreshold = 0.12f;   // 左右颜色差低于此值时允许平滑混合
+    float paniniD = 1.0f;           // Panini d，越大越接近柱面压缩
 
     float fisheyeFovDeg = 180f;
     float fishCenterX = 0.5f;
@@ -50,8 +74,6 @@ final class ProjectionSettings {
     float sourcePitchDeg = 0f;
     float sourceRollDeg = 0f;
 
-    // Manual image-space corrections.  Normal Android SurfaceTexture orientation is
-    // corrected automatically in VrRenderer; these are only for unusual source files.
     boolean sourceFlipX = false;
     boolean sourceFlipY = false;
 
@@ -63,7 +85,14 @@ final class ProjectionSettings {
         x.projection = projection;
         x.stereoLayout = stereoLayout;
         x.eye = eye;
+        x.stereoViewMode = stereoViewMode;
+        x.outputProjection = outputProjection;
         x.viewFovDeg = viewFovDeg;
+        x.stereoIpdMm = stereoIpdMm;
+        x.shellDepthM = shellDepthM;
+        x.disparityRange = disparityRange;
+        x.smartThreshold = smartThreshold;
+        x.paniniD = paniniD;
         x.fisheyeFovDeg = fisheyeFovDeg;
         x.fishCenterX = fishCenterX;
         x.fishCenterY = fishCenterY;
@@ -153,7 +182,21 @@ final class ProjectionSettings {
             case BT: l = "BT"; break;
             default: l = "Mono";
         }
+        String sv;
+        if (stereoLayout == MONO) sv = "单目";
+        else switch (stereoViewMode) {
+            case STEREO_SHELL: sv = "中央球壳"; break;
+            case STEREO_SMART: sv = "智能融合"; break;
+            case STEREO_DISPARITY: sv = "视差中眼"; break;
+            default: sv = eye == EYE_LEFT ? "左眼" : "右眼";
+        }
+        String out;
+        switch (outputProjection) {
+            case OUTPUT_HUMAN_WIDE: out = "人眼宽视野"; break;
+            case OUTPUT_PANINI: out = "Panini"; break;
+            default: out = "普通透视";
+        }
         String flip = (sourceFlipX ? " / FlipX" : "") + (sourceFlipY ? " / FlipY" : "");
-        return p + " / " + l + (stereoLayout == MONO ? "" : (eye == EYE_LEFT ? " / L" : " / R")) + flip;
+        return p + " / " + l + " / " + sv + " / " + out + flip;
     }
 }
