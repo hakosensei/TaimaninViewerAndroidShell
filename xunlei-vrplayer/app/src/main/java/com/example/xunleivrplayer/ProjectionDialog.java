@@ -5,6 +5,7 @@ import android.app.AlertDialog;
 import android.text.InputType;
 import android.view.View;
 import android.widget.ArrayAdapter;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -41,7 +42,7 @@ final class ProjectionDialog {
         root.setPadding(pad, pad, pad, pad);
 
         TextView tip = new TextView(a);
-        tip.setText("投影和左右眼布局是两件事。日本 VR 片源不确定时建议先试 ERP 180° + SBS；底部仍异常时再试 Fisheye。双指缩放可调整观看 FOV。");
+        tip.setText("投影和左右眼布局是两件事。日本 VR 片源不确定时建议先试 ERP 180° + SBS。播放器已自动修正 Android 视频纹理上下方向；只有特殊片源才需要手动翻转。");
         root.addView(tip);
 
         Spinner projection = spinner(a, PROJECTIONS);
@@ -66,6 +67,15 @@ final class ProjectionDialog {
         adv.setTextSize(18);
         adv.setPadding(0, dp(a, 14), 0, dp(a, 4));
         root.addView(adv);
+
+        CheckBox flipX = new CheckBox(a);
+        flipX.setText("水平镜像 X（特殊片源）");
+        flipX.setChecked(s.sourceFlipX);
+        root.addView(flipX);
+        CheckBox flipY = new CheckBox(a);
+        flipY.setText("垂直翻转 Y（特殊片源）");
+        flipY.setChecked(s.sourceFlipY);
+        root.addView(flipY);
 
         EditText cx = number(a, s.fishCenterX), cy = number(a, s.fishCenterY), radius = number(a, s.fishRadius);
         addLabeled(a, root, "鱼眼中心 X（0–1）", cx);
@@ -100,6 +110,8 @@ final class ProjectionDialog {
                 s.eye = eye.getSelectedItemPosition() == 1 ? ProjectionSettings.EYE_RIGHT : ProjectionSettings.EYE_LEFT;
                 s.viewFovDeg = clamp(parse(viewFov, s.viewFovDeg), 25f, 135f);
                 s.fisheyeFovDeg = clamp(s.fisheyeFovDeg, 90f, 260f);
+                s.sourceFlipX = flipX.isChecked();
+                s.sourceFlipY = flipY.isChecked();
                 s.fishCenterX = parse(cx, s.fishCenterX); s.fishCenterY = parse(cy, s.fishCenterY); s.fishRadius = parse(radius, s.fishRadius);
                 s.fishScaleX = parse(sx, s.fishScaleX); s.fishScaleY = parse(sy, s.fishScaleY);
                 s.fishK1 = parse(k1, s.fishK1); s.fishK2 = parse(k2, s.fishK2); s.fishK3 = parse(k3, s.fishK3);
