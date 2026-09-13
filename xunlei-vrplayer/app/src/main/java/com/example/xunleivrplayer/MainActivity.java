@@ -33,7 +33,7 @@ import java.util.concurrent.Executors;
 /**
  * 首页 + 迅雷云盘浏览器。
  *
- * 迅雷只负责提供媒体字节，真正的 VR->平面投影由 PlayerActivity 完成。
+ * 迅雷负责账号、云盘和云播线路；真正的 VR->平面投影由 PlayerActivity/VrRenderer 完成。
  */
 public class MainActivity extends Activity {
     private static final int REQ_FILE = 2301;
@@ -77,7 +77,7 @@ public class MainActivity extends Activity {
     private void showHome() {
         LinearLayout root=column(22);
         TextView title=text("Xunlei VR Player",30,true);
-        TextView sub=text("迅雷云盘直读 + 独立 VR 投影播放器\n不需要 DeoVR，也不需要先把整部片下载到手机。",15,false);
+        TextView sub=text("迅雷云播 + 独立 VR→平面实时投影\n优先使用迅雷 medias 视频线路；原始文件直链仅作兜底。",15,false);
         Button cloud=button("打开迅雷云盘");
         Button reset=button("重新登录迅雷 / 清除登录状态");
         Button local=button("打开手机本地视频");
@@ -154,10 +154,7 @@ public class MainActivity extends Activity {
                 list.sort(Comparator.comparing((Models.CloudItem x)->!x.isDir()).thenComparing(x->x.name.toLowerCase(Locale.ROOT)));
                 ui.post(()->showFileList(list));
             }catch(Exception e){
-                ui.post(()->{
-                    toast("读取失败："+e.getMessage());
-                    showHome();
-                });
+                ui.post(()->{toast("读取失败："+e.getMessage());showHome();});
             }
         });
     }
@@ -176,7 +173,38 @@ public class MainActivity extends Activity {
         lv.setOnItemClickListener((p,v,i,id)->{Models.CloudItem f=shown.get(i);if(f.isDir()){stack.push(new FolderPos(f.id,f.space==null?"":f.space,f.name));loadCurrentFolder();}else if(f.isVideo())chooseAndPlayCloud(f);});
     }
 
-    private void chooseAndPlayCloud(Models.CloudItem f){ProjectionSettings guess=ProjectionSettings.guess(f.name);ProjectionDialog.show(this,guess,s->{showBusy("正在获取迅雷播放地址…");io.execute(()->{try{Models.StreamLink link=api.getStreamLink(f);ui.post(()->PlayerActivity.start(this,link.url,link.userAgent,f.name,s));}catch(Exception e){ui.post(()->{toast("获取播放地址失败："+e.getMessage());loadCurrentFolder();});}});});}
+    /** First choose projection, then ask Xunlei for its cloud-play/transcode lines. */
+    private void chooseAndPlayCloud(Models.CloudItem f){
+        ProjectionSettings guess=ProjectionSettings.guess(f.name);
+        ProjectionDialog.show(this,guess,s->{
+            toast("正在获取迅雷云播线路…");
+            io.execute(()->{
+                try{
+                    List<Models.StreamLink> links=api.getStreamLinks(f);
+                    ui.post(()->showStreamChoice(f,s,links));
+                }catch(Exception e){ui.post(()->toast("获取播放地址失败："+e.getMessage()));}
+            });
+        });
+    }
+
+    private void showStreamChoice(Models.CloudItem f, ProjectionSettings s, List<Models.StreamLink> links){
+        if(links==null||links.isEmpty()){toast("迅雷没有返回可用播放线路");return;}
+        if(links.size()==1){
+            Models.StreamLink link=links.get(0);
+            PlayerActivity.start(this,link.url,link.userAgent,f.name,s);
+            return;
+        }
+        String[] labels=new String[links.size()];
+        for(int i=0;i<links.size();i++) labels[i]=links.get(i).label;
+        new AlertDialog.Builder(this)
+                .setTitle("迅雷播放质量 / 线路")
+                .setItems(labels,(d,which)->{
+                    Models.StreamLink link=links.get(which);
+                    PlayerActivity.start(this,link.url,link.userAgent,f.name,s);
+                })
+                .setNegativeButton("取消",null)
+                .show();
+    }
 
     @Override protected void onActivityResult(int req,int result,Intent data){
         super.onActivityResult(req,result,data);
@@ -220,7 +248,7 @@ public class MainActivity extends Activity {
     private void showUrlDialog(){EditText e=edit("https://.../video.mp4 或 m3u8");new AlertDialog.Builder(this).setTitle("网络视频 URL").setView(e).setNegativeButton("取消",null).setPositiveButton("下一步",(d,w)->{String u=e.getText().toString().trim();if(!u.isBlank())ProjectionDialog.show(this,ProjectionSettings.guess(u),s->PlayerActivity.start(this,u,"",u,s));}).show();}
 
     private void showGuide(){new AlertDialog.Builder(this).setTitle("这一版支持什么")
-            .setMessage("手动投影：\n• Flat 2D\n• 180° half-equirectangular\n• 360° equirectangular\n• Fisheye 180/190/200/220° + 自定义 FOV/中心/径向修正\n• Raw dual-fisheye 360\n• Cubemap 3×2\n• EAC 3×2\n\n立体布局：Mono、SBS-LR、SBS-RL、TB、BT。\n\n自动 Metadata 模式：交给 Android Media3 的 Spherical Video V2 渲染路径，可读取标准投影 metadata / projection mesh，适合真正的 Google VR180 文件。\n\n操作：单指拖动转动视角；双指缩放改变虚拟相机 FOV；双击或“回正”恢复正前方。平面观看立体视频时可在左/右眼之间切换。")
+            .setMessage("迅雷云盘：优先使用 medias 云播/转码线路，可选择迅雷返回的播放质量；原始文件直链只作兜底。\n\n手动投影：\n• Flat 2D\n• 180° half-equirectangular\n• 360° equirectangular\n• Fisheye 180/190/200/220° + 自定义 FOV/中心/径向修正\n• Raw dual-fisheye 360\n• Cubemap 3×2\n• EAC 3×2\n\n立体布局：Mono、SBS-LR、SBS-RL、TB、BT。\n\n自动 Metadata 模式：交给 Android Media3 的 Spherical Video V2 渲染路径。\n\n操作：单指拖动转动视角；双指缩放改变虚拟相机 FOV；双击或“回正”恢复正前方。平面观看立体视频时可在左/右眼之间切换。")
             .setPositiveButton("知道了",null).show();}
 
     private void showBusy(String s){LinearLayout r=column(24);TextView t=text(s,20,true);r.setGravity(Gravity.CENTER);r.addView(t);setContentView(r);}
