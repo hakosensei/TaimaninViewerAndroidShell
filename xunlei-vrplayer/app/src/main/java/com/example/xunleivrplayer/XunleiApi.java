@@ -24,10 +24,10 @@ import java.util.regex.Pattern;
  * Login flow mirrors the current OpenList/AList Thunder driver:
  * core v3 login -> security review (when required) -> captcha init -> signin/token.
  *
- * Important: Xunlei uses action-scoped captcha tokens.  A captcha token obtained
- * for signin/token is not necessarily valid for drive/file APIs.  OpenList handles
+ * Important: Xunlei uses action-scoped captcha tokens. A captcha token obtained
+ * for signin/token is not necessarily valid for drive/file APIs. OpenList handles
  * captcha_invalid by refreshing the captcha token for the failed action and retrying
- * the original request.  This client does the same.
+ * the original request. This client does the same.
  */
 class XunleiApi {
     static final String API_BASE = "https://api-pan.xunlei.com/drive/v1";
@@ -47,7 +47,6 @@ class XunleiApi {
     static final String SIGN_PROVIDER = "access_end_point_token";
     static final String ROOT_SPACE = "";
 
-    // Current standard Thunder driver captcha-sign algorithms from OpenList.
     private static final String[] CAPTCHA_ALGORITHMS = new String[]{
             "9uJNVj/wLmdwKrJaVj/omlQ",
             "Oz64Lp0GigmChHMf/6TNfxx7O9PyopcczMsnf",
@@ -101,8 +100,6 @@ class XunleiApi {
         }
         creditKey = trustedCreditKey == null ? "" : trustedCreditKey.trim();
         if (creditKey.isBlank()) throw new Exception("短信验证没有返回 CreditKey");
-        // Security review changes the trusted-device state.  Do not reuse a captcha
-        // token from the attempt that triggered review.
         captchaToken = "";
         Models.Token t = loginAfterIdentity(username, password);
         creditKey = "";
@@ -128,7 +125,6 @@ class XunleiApi {
     Models.Token loginWithRefreshToken(String refreshToken, String persistedDeviceId) throws Exception {
         configureIdentity((persistedDeviceId == null || persistedDeviceId.isBlank())
                 ? md5("xunlei-vr-player|" + refreshToken) : persistedDeviceId);
-        // A signin captcha token belongs to the previous access-token/session state.
         captchaToken = "";
         creditKey = "";
         JSONObject body = new JSONObject();
@@ -206,7 +202,6 @@ class XunleiApi {
         if (!verifyUrl.isBlank()) throw new VerificationRequiredException(verifyUrl);
     }
 
-    /** Refresh captcha token for an authenticated API action, mirroring OpenList. */
     private void refreshCaptchaTokenForAction(String method, String urlStr) throws Exception {
         ensureLoggedIn();
         String userId = token.userId == null ? "" : token.userId;
@@ -227,10 +222,6 @@ class XunleiApi {
         if (!verifyUrl.isBlank()) throw new VerificationRequiredException(verifyUrl);
     }
 
-    /**
-     * Initializes/refreshes a captcha token.  If Xunlei rejects the previous captcha
-     * token itself, clear it and retry once from a clean state.
-     */
     private JSONObject initCaptchaToken(String action, JSONObject meta, boolean retryWithoutOldToken) throws Exception {
         for (int attempt = 0; attempt < 2; attempt++) {
             JSONObject body = new JSONObject();
@@ -306,22 +297,48 @@ class XunleiApi {
         return out;
     }
 
-    Models.StreamLink getStreamLink(Models.CloudItem file) throws Exception {
+    /**
+     * Returns Xunlei's dedicated cloud-play/transcode URLs first and the original
+     * web_content_link only as a final fallback.  This mirrors OpenList's UseVideoUrl
+     * behavior and is much more suitable for streaming very high bitrate VR files.
+     */
+    List<Models.StreamLink> getStreamLinks(Models.CloudItem file) throws Exception {
         ensureLoggedIn();
         Uri.Builder b = Uri.parse(FILE_API + "/" + Uri.encode(file.id)).buildUpon();
+        b.appendQueryParameter("space", file.space == null ? "" : file.space);
         b.appendQueryParameter("thumbnail_size", "SIZE_LARGE");
         b.appendQueryParameter("with", "url");
         JSONObject o = requestJson("GET", b.build().toString(), null, true, null, null);
         Models.CloudItem detail = Models.CloudItem.fromJson(o);
 
-        String url = detail.webContentLink;
-        if (url == null || url.isBlank()) {
-            for (String u : detail.mediaUrls) {
-                if (u != null && !u.isBlank()) { url = u; break; }
+        List<Models.StreamLink> out = new ArrayList<>();
+        java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<>();
+
+        // Xunlei sometimes marks one media as default. Put it first, otherwise keep
+        // the server-provided order because that order is generally its preferred line.
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = 0; i < detail.mediaVariants.size(); i++) {
+                Models.MediaVariant v = detail.mediaVariants.get(i);
+                if (v.url == null || v.url.isBlank()) continue;
+                if ((pass == 0) != v.isDefault) continue;
+                if (!seen.add(v.url)) continue;
+                String prefix = v.isDefault ? "迅雷云播（推荐） · " : "迅雷云播 · ";
+                out.add(new Models.StreamLink(v.url, DOWNLOAD_UA, prefix + v.label(i), true,
+                        v.bitRate, v.width, v.height));
             }
         }
-        if (url == null || url.isBlank()) throw new Exception("迅雷没有返回可播放直链");
-        return new Models.StreamLink(url, DOWNLOAD_UA);
+
+        if (detail.webContentLink != null && !detail.webContentLink.isBlank() && seen.add(detail.webContentLink)) {
+            out.add(new Models.StreamLink(detail.webContentLink, DOWNLOAD_UA,
+                    "原始文件直链（兼容兜底，可能更卡）", false, 0, 0, 0));
+        }
+
+        if (out.isEmpty()) throw new Exception("迅雷没有返回云播线路或原始文件直链");
+        return out;
+    }
+
+    Models.StreamLink getStreamLink(Models.CloudItem file) throws Exception {
+        return getStreamLinks(file).get(0);
     }
 
     private void ensureLoggedIn() throws Exception {
@@ -334,7 +351,6 @@ class XunleiApi {
             return requestJsonOnce(method, urlStr, body, auth, extraHeaders, overrideUserAgent);
         } catch (CaptchaInvalidException e) {
             if (!auth) throw e;
-            // The login succeeded; only the action-scoped captcha token is stale.
             refreshCaptchaTokenForAction(method, urlStr);
             return requestJsonOnce(method, urlStr, body, true, extraHeaders, overrideUserAgent);
         }
