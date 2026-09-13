@@ -8,7 +8,9 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.Editable;
 import android.text.InputType;
+import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.ArrayAdapter;
@@ -160,17 +162,65 @@ public class MainActivity extends Activity {
     }
 
     private void showFileList(List<Models.CloudItem> raw){
-        FolderPos pos=stack.peek(); LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(dp(8),dp(8),dp(8),dp(8));
+        FolderPos pos=stack.peek();
+        LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(dp(8),dp(8),dp(8),dp(8));
         LinearLayout top=new LinearLayout(this); top.setGravity(Gravity.CENTER_VERTICAL);
         Button back=button("←"); TextView title=text(pos==null?"迅雷云盘":pos.name,20,true);title.setSingleLine(true);Button home=button("首页");Button logout=button("退出登录");
         top.addView(back,new LinearLayout.LayoutParams(dp(56),dp(50)));top.addView(title,new LinearLayout.LayoutParams(0,dp(50),1));top.addView(home,new LinearLayout.LayoutParams(dp(72),dp(50)));top.addView(logout,new LinearLayout.LayoutParams(dp(96),dp(50)));root.addView(top);
+
+        // Folder-name search is intentionally local to the currently displayed directory:
+        // type "VR", a studio name, etc. and only matching folders remain visible.
+        LinearLayout searchRow=new LinearLayout(this);searchRow.setGravity(Gravity.CENTER_VERTICAL);
+        EditText folderSearch=edit("搜索当前目录文件夹，例如 VR");
+        Button clearSearch=button("清空");
+        searchRow.addView(folderSearch,new LinearLayout.LayoutParams(0,dp(48),1));
+        searchRow.addView(clearSearch,new LinearLayout.LayoutParams(dp(72),dp(48)));
+        root.addView(searchRow);
+
         CheckBox filter=new CheckBox(this);filter.setText("只显示文件夹和视频");filter.setChecked(onlyVideo);root.addView(filter);
-        ArrayList<Models.CloudItem> shown=new ArrayList<>();for(Models.CloudItem f:raw)if(!onlyVideo||f.isDir()||f.isVideo())shown.add(f);
-        ArrayList<String> labels=new ArrayList<>();for(Models.CloudItem f:shown)labels.add((f.isDir()?"📁 ":"🎬 ")+f.name+(f.isDir()?"":"   "+human(f.sizeBytes())));
-        ListView lv=new ListView(this);lv.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_list_item_1,labels));root.addView(lv,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
-        filter.setOnCheckedChangeListener((b,c)->{onlyVideo=c;showFileList(raw);});
-        back.setOnClickListener(v->{if(stack.size()>1){stack.pop();loadCurrentFolder();}else showHome();});home.setOnClickListener(v->showHome());logout.setOnClickListener(v->{store.clearLogin();api=new XunleiApi();showLogin();});
-        lv.setOnItemClickListener((p,v,i,id)->{Models.CloudItem f=shown.get(i);if(f.isDir()){stack.push(new FolderPos(f.id,f.space==null?"":f.space,f.name));loadCurrentFolder();}else if(f.isVideo())chooseAndPlayCloud(f);});
+
+        ArrayList<Models.CloudItem> shown=new ArrayList<>();
+        ArrayList<String> labels=new ArrayList<>();
+        ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_list_item_1,labels);
+        ListView lv=new ListView(this);lv.setAdapter(adapter);root.addView(lv,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
+
+        Runnable refreshList=()->{
+            shown.clear(); labels.clear();
+            String q=folderSearch.getText().toString().trim().toLowerCase(Locale.ROOT);
+            for(Models.CloudItem f:raw){
+                boolean include;
+                if(!q.isBlank()){
+                    // User requested folder search specifically: while text is present,
+                    // video/files are hidden rather than mixed into search results.
+                    include=f.isDir()&&f.name!=null&&f.name.toLowerCase(Locale.ROOT).contains(q);
+                }else{
+                    include=!onlyVideo||f.isDir()||f.isVideo();
+                }
+                if(include){
+                    shown.add(f);
+                    labels.add((f.isDir()?"📁 ":"🎬 ")+f.name+(f.isDir()?"":"   "+human(f.sizeBytes())));
+                }
+            }
+            adapter.notifyDataSetChanged();
+        };
+        refreshList.run();
+
+        folderSearch.addTextChangedListener(new TextWatcher(){
+            @Override public void beforeTextChanged(CharSequence s,int start,int count,int after){}
+            @Override public void onTextChanged(CharSequence s,int start,int before,int count){refreshList.run();}
+            @Override public void afterTextChanged(Editable s){}
+        });
+        clearSearch.setOnClickListener(v->folderSearch.setText(""));
+        filter.setOnCheckedChangeListener((b,c)->{onlyVideo=c;refreshList.run();});
+        back.setOnClickListener(v->{if(stack.size()>1){stack.pop();loadCurrentFolder();}else showHome();});
+        home.setOnClickListener(v->showHome());
+        logout.setOnClickListener(v->{store.clearLogin();api=new XunleiApi();showLogin();});
+        lv.setOnItemClickListener((p,v,i,id)->{
+            if(i<0||i>=shown.size())return;
+            Models.CloudItem f=shown.get(i);
+            if(f.isDir()){stack.push(new FolderPos(f.id,f.space==null?"":f.space,f.name));loadCurrentFolder();}
+            else if(f.isVideo())chooseAndPlayCloud(f);
+        });
     }
 
     /** First choose projection, then ask Xunlei for its cloud-play/transcode lines. */
@@ -191,7 +241,7 @@ public class MainActivity extends Activity {
         if(links==null||links.isEmpty()){toast("迅雷没有返回可用播放线路");return;}
         if(links.size()==1){
             Models.StreamLink link=links.get(0);
-            PlayerActivity.start(this,link.url,link.userAgent,f.name,s);
+            PlayerActivity.start(this,link.url,link.userAgent,f.name,s,link.durationMs>0?link.durationMs:f.durationMs);
             return;
         }
         String[] labels=new String[links.size()];
@@ -200,7 +250,7 @@ public class MainActivity extends Activity {
                 .setTitle("迅雷播放质量 / 线路")
                 .setItems(labels,(d,which)->{
                     Models.StreamLink link=links.get(which);
-                    PlayerActivity.start(this,link.url,link.userAgent,f.name,s);
+                    PlayerActivity.start(this,link.url,link.userAgent,f.name,s,link.durationMs>0?link.durationMs:f.durationMs);
                 })
                 .setNegativeButton("取消",null)
                 .show();
@@ -248,7 +298,7 @@ public class MainActivity extends Activity {
     private void showUrlDialog(){EditText e=edit("https://.../video.mp4 或 m3u8");new AlertDialog.Builder(this).setTitle("网络视频 URL").setView(e).setNegativeButton("取消",null).setPositiveButton("下一步",(d,w)->{String u=e.getText().toString().trim();if(!u.isBlank())ProjectionDialog.show(this,ProjectionSettings.guess(u),s->PlayerActivity.start(this,u,"",u,s));}).show();}
 
     private void showGuide(){new AlertDialog.Builder(this).setTitle("这一版支持什么")
-            .setMessage("迅雷云盘：优先使用 medias 云播/转码线路，可选择迅雷返回的播放质量；原始文件直链只作兜底。\n\n手动投影：\n• Flat 2D\n• 180° half-equirectangular\n• 360° equirectangular\n• Fisheye 180/190/200/220° + 自定义 FOV/中心/径向修正\n• Raw dual-fisheye 360\n• Cubemap 3×2\n• EAC 3×2\n\n立体布局：Mono、SBS-LR、SBS-RL、TB、BT。\n\n自动 Metadata 模式：交给 Android Media3 的 Spherical Video V2 渲染路径。\n\n操作：单指拖动转动视角；双指缩放改变虚拟相机 FOV；双击或“回正”恢复正前方。平面观看立体视频时可在左/右眼之间切换。")
+            .setMessage("迅雷云盘：优先使用 medias 云播/转码线路，可选择迅雷返回的播放质量；原始文件直链只作兜底。云盘列表可按当前目录的文件夹名搜索，例如输入 VR。\n\n手动投影：\n• Flat 2D\n• 180° half-equirectangular\n• 360° equirectangular\n• Fisheye 180/190/200/220° + 自定义 FOV/中心/径向修正\n• Raw dual-fisheye 360\n• Cubemap 3×2\n• EAC 3×2\n\n立体布局：Mono、SBS-LR、SBS-RL、TB、BT。\n\n自动 Metadata 模式：交给 Android Media3 的 Spherical Video V2 渲染路径。\n\n操作：单指拖动转动视角；双指缩放改变虚拟相机 FOV；双击或“回正”恢复正前方。平面观看立体视频时可在左/右眼之间切换。")
             .setPositiveButton("知道了",null).show();}
 
     private void showBusy(String s){LinearLayout r=column(24);TextView t=text(s,20,true);r.setGravity(Gravity.CENTER);r.addView(t);setContentView(r);}
