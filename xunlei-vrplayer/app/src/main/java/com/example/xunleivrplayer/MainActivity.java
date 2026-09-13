@@ -33,7 +33,7 @@ import java.util.concurrent.Executors;
 /**
  * 首页 + 迅雷云盘浏览器。
  *
- * 这一版不再依赖 DeoVR：迅雷只负责提供媒体字节，真正的 VR->平面投影由 PlayerActivity 完成。
+ * 迅雷只负责提供媒体字节，真正的 VR->平面投影由 PlayerActivity 完成。
  */
 public class MainActivity extends Activity {
     private static final int REQ_FILE = 2301;
@@ -79,13 +79,20 @@ public class MainActivity extends Activity {
         TextView title=text("Xunlei VR Player",30,true);
         TextView sub=text("迅雷云盘直读 + 独立 VR 投影播放器\n不需要 DeoVR，也不需要先把整部片下载到手机。",15,false);
         Button cloud=button("打开迅雷云盘");
+        Button reset=button("重新登录迅雷 / 清除登录状态");
         Button local=button("打开手机本地视频");
         Button url=button("播放网络视频 URL");
         Button guide=button("支持的 VR 格式 / 操作说明");
-        root.addView(title); root.addView(sub); gap(root); root.addView(cloud); root.addView(local); root.addView(url); root.addView(guide);
+        root.addView(title); root.addView(sub); gap(root); root.addView(cloud); root.addView(reset); root.addView(local); root.addView(url); root.addView(guide);
         setContentView(wrap(root));
 
         cloud.setOnClickListener(v->openCloud());
+        reset.setOnClickListener(v->{
+            store.clearLogin();
+            pendingUser=""; pendingPassword="";
+            api=new XunleiApi();
+            showLogin();
+        });
         local.setOnClickListener(v->{ Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("video/*");startActivityForResult(i,REQ_FILE);});
         url.setOnClickListener(v->showUrlDialog());
         guide.setOnClickListener(v->showGuide());
@@ -97,7 +104,7 @@ public class MainActivity extends Activity {
         showBusy("正在恢复迅雷登录…");
         io.execute(()->{
             try{Models.Token t=api.loginWithRefreshToken(refresh,device);saveSession(store.getPlain("username",""),t);ui.post(this::showBrowserRoot);}
-            catch(Exception e){store.clearLogin();ui.post(()->{toast("登录状态已失效，请重新登录");showLogin();});}
+            catch(Exception e){store.clearLogin();ui.post(()->{toast("恢复登录失败："+e.getMessage());showLogin();});}
         });
     }
 
@@ -139,7 +146,21 @@ public class MainActivity extends Activity {
     }
 
     private void showBrowserRoot(){stack.clear();stack.push(new FolderPos("",XunleiApi.ROOT_SPACE,"迅雷云盘"));loadCurrentFolder();}
-    private void loadCurrentFolder(){FolderPos p=stack.peek();showBusy("正在读取 "+(p==null?"云盘":p.name)+"…");io.execute(()->{try{List<Models.CloudItem> list=api.list(p==null?"":p.id,p==null?XunleiApi.ROOT_SPACE:p.space);list.sort(Comparator.comparing((Models.CloudItem x)->!x.isDir()).thenComparing(x->x.name.toLowerCase(Locale.ROOT)));ui.post(()->showFileList(list));}catch(Exception e){ui.post(()->{toast("读取失败："+e.getMessage());showHome();});}});}
+    private void loadCurrentFolder(){
+        FolderPos p=stack.peek();showBusy("正在读取 "+(p==null?"云盘":p.name)+"…");
+        io.execute(()->{
+            try{
+                List<Models.CloudItem> list=api.list(p==null?"":p.id,p==null?XunleiApi.ROOT_SPACE:p.space);
+                list.sort(Comparator.comparing((Models.CloudItem x)->!x.isDir()).thenComparing(x->x.name.toLowerCase(Locale.ROOT)));
+                ui.post(()->showFileList(list));
+            }catch(Exception e){
+                ui.post(()->{
+                    toast("读取失败："+e.getMessage());
+                    showHome();
+                });
+            }
+        });
+    }
 
     private void showFileList(List<Models.CloudItem> raw){
         FolderPos pos=stack.peek(); LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(dp(8),dp(8),dp(8),dp(8));
@@ -151,7 +172,7 @@ public class MainActivity extends Activity {
         ArrayList<String> labels=new ArrayList<>();for(Models.CloudItem f:shown)labels.add((f.isDir()?"📁 ":"🎬 ")+f.name+(f.isDir()?"":"   "+human(f.sizeBytes())));
         ListView lv=new ListView(this);lv.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_list_item_1,labels));root.addView(lv,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
         filter.setOnCheckedChangeListener((b,c)->{onlyVideo=c;showFileList(raw);});
-        back.setOnClickListener(v->{if(stack.size()>1){stack.pop();loadCurrentFolder();}else showHome();});home.setOnClickListener(v->showHome());logout.setOnClickListener(v->{store.clearLogin();showLogin();});
+        back.setOnClickListener(v->{if(stack.size()>1){stack.pop();loadCurrentFolder();}else showHome();});home.setOnClickListener(v->showHome());logout.setOnClickListener(v->{store.clearLogin();api=new XunleiApi();showLogin();});
         lv.setOnItemClickListener((p,v,i,id)->{Models.CloudItem f=shown.get(i);if(f.isDir()){stack.push(new FolderPos(f.id,f.space==null?"":f.space,f.name));loadCurrentFolder();}else if(f.isVideo())chooseAndPlayCloud(f);});
     }
 
