@@ -28,7 +28,6 @@ final class VrRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFrame
         void onVideoSurfaceDestroyed(Surface surface);
     }
 
-    // vTexCoord 使用图像坐标：(0,0) 为左上。
     private static final float[] QUAD = {
             -1f,-1f,0f,1f,  1f,-1f,1f,1f,
             -1f, 1f,0f,0f,  1f, 1f,1f,0f
@@ -196,7 +195,7 @@ final class VrRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFrame
             "vec3 orient(vec3 d){d=rz(d,rad(uRollDeg));d=rx(d,rad(uPitchDeg));d=ry(d,rad(uYawDeg));return d;}\n"+
             "vec2 packEye(vec2 uv,int e){if(uStereo==1)return vec2((uv.x+float(e))*0.5,uv.y);if(uStereo==2)return vec2((uv.x+float(1-e))*0.5,uv.y);if(uStereo==3)return vec2(uv.x,(uv.y+float(e))*0.5);if(uStereo==4)return vec2(uv.x,(uv.y+float(1-e))*0.5);return uv;}\n"+
             "vec4 sampleImage(vec2 src){vec2 gluv=vec2(src.x,1.0-src.y);vec2 tuv=(uTexMatrix*vec4(gluv,0.0,1.0)).xy;return texture2D(uTexture,tuv);}\n"+
-            "vec4 sampleEyeUv(vec2 uv,int e,out float ok){if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0){ok=0.0;return vec4(0.0);}if(uFlipX==1)uv.x=1.0-uv.x;if(uFlipY==1)uv.y=1.0-uv.y;vec2 src=(uProjection==5||uStereo==0)?uv:packEye(uv,e);if(src.x<0.0||src.x>1.0||src.y<0.0||src.y>1.0){ok=0.0;return vec4(0.0);}return sampleImage(src);}\n"+
+            "vec4 sampleEyeUv(vec2 uv,int e,out float ok){ok=1.0;if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0){ok=0.0;return vec4(0.0);}if(uFlipX==1)uv.x=1.0-uv.x;if(uFlipY==1)uv.y=1.0-uv.y;vec2 src=(uProjection==5||uStereo==0)?uv:packEye(uv,e);if(src.x<0.0||src.x>1.0||src.y<0.0||src.y>1.0){ok=0.0;return vec4(0.0);}return sampleImage(src);}\n"+
             "vec2 fish(vec3 d,out float ok){float th=acos(clamp(d.z,-1.0,1.0));float m=rad(uFishFovDeg*0.5);if(th>m){ok=0.0;return vec2(0.0);}float st=sin(th);vec2 q=st<0.00001?vec2(0.0):vec2(d.x,d.y)/st;float r=th/max(m,0.00001);float r2=r*r;float rc=r*(1.0+uFishK.x*r2+uFishK.y*r2*r2+uFishK.z*r2*r2*r2);vec2 uv=uFishCenter+vec2(q.x*uFishScale.x,-q.y*uFishScale.y)*(uFishRadius*rc);if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0)ok=0.0;return uv;}\n"+
             "vec2 cubeFace(vec3 d,bool eac,out float face){vec3 a=abs(d);float u=0.0,v=0.0;if(a.x>=a.y&&a.x>=a.z){if(d.x>0.0){face=0.0;u=-d.z/a.x;v=d.y/a.x;}else{face=1.0;u=d.z/a.x;v=d.y/a.x;}}else if(a.y>=a.x&&a.y>=a.z){if(d.y>0.0){face=2.0;u=d.x/a.y;v=-d.z/a.y;}else{face=3.0;u=d.x/a.y;v=d.z/a.y;}}else{if(d.z>0.0){face=4.0;u=d.x/a.z;v=d.y/a.z;}else{face=5.0;u=-d.x/a.z;v=d.y/a.z;}}if(eac){u=atan(u)/(PI*0.25);v=atan(v)/(PI*0.25);}return vec2((u+1.0)*0.5,(1.0-v)*0.5);}\n"+
             "vec2 cube(vec3 d,bool eac){float face;vec2 f=cubeFace(d,eac,face);float col=mod(face,3.0),row=floor(face/3.0);return(f+vec2(col,row))/vec2(3.0,2.0);}\n"+
