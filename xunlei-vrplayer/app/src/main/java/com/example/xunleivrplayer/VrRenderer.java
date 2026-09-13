@@ -71,7 +71,7 @@ final class VrRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFrame
         settings = s;
     }
 
-    @Override public void onSurfaceCreated(javax.microedition.khronos.egl.EGLConfig config) {
+    @Override public void onSurfaceCreated(javax.microedition.khronos.opengles.GL10 gl, javax.microedition.khronos.egl.EGLConfig config) {
         textureId = createExternalTexture();
         surfaceTexture = new SurfaceTexture(textureId);
         surfaceTexture.setOnFrameAvailableListener(this);
@@ -209,53 +209,7 @@ final class VrRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFrame
             "uniform float uAspect; uniform float uViewFovDeg;\n" +
             "uniform float uYawDeg; uniform float uPitchDeg; uniform float uRollDeg;\n" +
             "uniform float uFishFovDeg; uniform vec2 uFishCenter; uniform float uFishRadius;\n" +
-            "uniform vec2 uFishScale; uniform vec3 uFishK;\n" +
-            "uniform int uDualLayout; uniform int uDualSwap;\n" +
-            "varying vec2 vTexCoord;\n" +
-            "const float PI=3.14159265358979323846;\n" +
-            "float rad(float d){return d*PI/180.0;}\n" +
-            "vec3 rotX(vec3 p,float a){float c=cos(a),s=sin(a);return vec3(p.x,c*p.y-s*p.z,s*p.y+c*p.z);}\n" +
-            "vec3 rotY(vec3 p,float a){float c=cos(a),s=sin(a);return vec3(c*p.x+s*p.z,p.y,-s*p.x+c*p.z);}\n" +
-            "vec3 rotZ(vec3 p,float a){float c=cos(a),s=sin(a);return vec3(c*p.x-s*p.y,s*p.x+c*p.y,p.z);}\n" +
-            "vec2 stereoUV(vec2 uv){\n" +
-            " if(uStereo==1){ return vec2((uv.x+float(uEye))*0.5,uv.y);}\n" +
-            " if(uStereo==2){ return vec2((uv.x+float(1-uEye))*0.5,uv.y);}\n" +
-            " if(uStereo==3){ return vec2(uv.x,(uv.y+float(uEye))*0.5);}\n" +
-            " if(uStereo==4){ return vec2(uv.x,(uv.y+float(1-uEye))*0.5);}\n" +
-            " return uv; }\n" +
-            "vec2 fishLocal(vec3 d,out float valid){\n" +
-            " float th=acos(clamp(d.z,-1.0,1.0)); float m=rad(uFishFovDeg*0.5);\n" +
-            " if(th>m){valid=0.0;return vec2(0.0);}\n" +
-            " float st=sin(th); vec2 q=(st<0.00001)?vec2(0.0):vec2(d.x,d.y)/st;\n" +
-            " float r=th/max(m,0.00001); float r2=r*r;\n" +
-            " float rc=r*(1.0+uFishK.x*r2+uFishK.y*r2*r2+uFishK.z*r2*r2*r2);\n" +
-            " vec2 off=vec2(q.x*uFishScale.x,-q.y*uFishScale.y)*(uFishRadius*rc);\n" +
-            " vec2 uv=uFishCenter+off;\n" +
-            " if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0) valid=0.0;\n" +
-            " return uv; }\n" +
-            "vec2 cubeFace(vec3 d,bool eac,out float face){\n" +
-            " vec3 a=abs(d); float u=0.0,v=0.0;\n" +
-            " if(a.x>=a.y&&a.x>=a.z){ if(d.x>0.0){face=0.0;u=-d.z/a.x;v=d.y/a.x;} else {face=1.0;u=d.z/a.x;v=d.y/a.x;} }\n" +
-            " else if(a.y>=a.x&&a.y>=a.z){ if(d.y>0.0){face=2.0;u=d.x/a.y;v=-d.z/a.y;} else {face=3.0;u=d.x/a.y;v=d.z/a.y;} }\n" +
-            " else { if(d.z>0.0){face=4.0;u=d.x/a.z;v=d.y/a.z;} else {face=5.0;u=-d.x/a.z;v=d.y/a.z;} }\n" +
-            " if(eac){u=atan(u)/(PI*0.25);v=atan(v)/(PI*0.25);}\n" +
-            " return vec2((u+1.0)*0.5,(1.0-v)*0.5); }\n" +
-            "vec2 cubeAtlas(vec3 d,bool eac){float face;vec2 f=cubeFace(d,eac,face);float col=mod(face,3.0);float row=floor(face/3.0);return (f+vec2(col,row))/vec2(3.0,2.0);}\n" +
-            "void main(){\n" +
-            " vec2 src; float valid=1.0;\n" +
-            " if(uProjection==1){ src=stereoUV(vTexCoord); }\n" +
-            " else {\n" +
-            "  float t=tan(rad(uViewFovDeg)*0.5); vec2 p=vec2((vTexCoord.x*2.0-1.0)*uAspect*t,(1.0-vTexCoord.y*2.0)*t);\n" +
-            "  vec3 d=normalize(vec3(p,1.0)); d=rotZ(d,rad(uRollDeg)); d=rotX(d,rad(uPitchDeg)); d=rotY(d,rad(uYawDeg));\n" +
-            "  if(uProjection==2){ float lon=atan(d.x,d.z);float lat=asin(clamp(d.y,-1.0,1.0)); if(abs(lon)>PI*0.5){valid=0.0;} src=vec2(lon/PI+0.5,0.5-lat/PI); src=stereoUV(src);}\n" +
-            "  else if(uProjection==3){ float lon=atan(d.x,d.z);float lat=asin(clamp(d.y,-1.0,1.0)); src=vec2(lon/(2.0*PI)+0.5,0.5-lat/PI); src=stereoUV(src);}\n" +
-            "  else if(uProjection==4){ src=stereoUV(fishLocal(d,valid));}\n" +
-            "  else if(uProjection==5){ bool back=d.z<0.0; vec3 q=back?vec3(-d.x,d.y,-d.z):d; vec2 fuv=fishLocal(q,valid); int lens=back?1:0; if(uDualSwap==1) lens=1-lens; if(uDualLayout==0) src=vec2((fuv.x+float(lens))*0.5,fuv.y); else src=vec2(fuv.x,(fuv.y+float(lens))*0.5);}\n" +
-            "  else if(uProjection==6){ src=stereoUV(cubeAtlas(d,false));}\n" +
-            "  else if(uProjection==7){ src=stereoUV(cubeAtlas(d,true));}\n" +
-            "  else { src=stereoUV(vTexCoord);}\n" +
-            " }\n" +
-            " if(valid<0.5||src.x<0.0||src.x>1.0||src.y<0.0||src.y>1.0) gl_FragColor=vec4(0.0,0.0,0.0,1.0);\n" +
-            " else { vec2 tuv=(uTexMatrix*vec4(src,0.0,1.0)).xy; gl_FragColor=texture2D(uTexture,tuv); }\n" +
-            "}\n";
-}
+            "u[šY›Ü›H™XÌˆQš\ÚØØ[NÈ[šY›Ü›H™XÌÈQš\ÚÎ×ˆˆ
+Âˆ[šY›Ü›H[QX[^[İ]È[šY›Ü›H[QX[İØ\×ˆˆ
+Âˆ˜\Z[™È™XÌˆ•^ÛÛÜ™×ˆˆ
+Âˆ˜ÛÛœİ›Ø]OLËŒMMNLLÍNMÎLÌŒÎ×H@‘
