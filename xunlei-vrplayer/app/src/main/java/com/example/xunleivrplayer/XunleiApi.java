@@ -23,7 +23,11 @@ import java.util.regex.Pattern;
  *
  * Login flow mirrors the current OpenList/AList Thunder driver:
  * core v3 login -> security review (when required) -> captcha init -> signin/token.
- * Successful login persists refresh_token in SecureStore from MainActivity.
+ *
+ * Important: Xunlei uses action-scoped captcha tokens.  A captcha token obtained
+ * for signin/token is not necessarily valid for drive/file APIs.  OpenList handles
+ * captcha_invalid by refreshing the captcha token for the failed action and retrying
+ * the original request.  This client does the same.
  */
 class XunleiApi {
     static final String API_BASE = "https://api-pan.xunlei.com/drive/v1";
@@ -43,12 +47,30 @@ class XunleiApi {
     static final String SIGN_PROVIDER = "access_end_point_token";
     static final String ROOT_SPACE = "";
 
+    // Current standard Thunder driver captcha-sign algorithms from OpenList.
+    private static final String[] CAPTCHA_ALGORITHMS = new String[]{
+            "9uJNVj/wLmdwKrJaVj/omlQ",
+            "Oz64Lp0GigmChHMf/6TNfxx7O9PyopcczMsnf",
+            "Eb+L7Ce+Ej48u",
+            "jKY0",
+            "ASr0zCl6v8W4aidjPK5KHd1Lq3t+vBFf41dqv5+fnOd",
+            "wQlozdg6r1qxh0eRmt3QgNXOvSZO6q/GXK",
+            "gmirk+ciAvIgA/cxUUCema47jr/YToixTT+Q6O",
+            "5IiCoM9B1/788ntB",
+            "P07JH0h6qoM6TSUAK2aL9T5s2QBVeY9JWvalf",
+            "+oK0AN"
+    };
+
     static class VerificationRequiredException extends Exception {
         final String verifyUrl;
         VerificationRequiredException(String verifyUrl) {
             super("迅雷要求额外验证");
             this.verifyUrl = verifyUrl == null ? "" : verifyUrl;
         }
+    }
+
+    private static final class CaptchaInvalidException extends Exception {
+        CaptchaInvalidException(String message) { super(message); }
     }
 
     private Models.Token token;
@@ -69,6 +91,7 @@ class XunleiApi {
     Models.Token login(String username, String password) throws Exception {
         configureIdentity(md5("xunlei-vr-player|" + username));
         creditKey = "";
+        captchaToken = "";
         return loginAfterIdentity(username, password);
     }
 
@@ -78,6 +101,9 @@ class XunleiApi {
         }
         creditKey = trustedCreditKey == null ? "" : trustedCreditKey.trim();
         if (creditKey.isBlank()) throw new Exception("短信验证没有返回 CreditKey");
+        // Security review changes the trusted-device state.  Do not reuse a captcha
+        // token from the attempt that triggered review.
+        captchaToken = "";
         Models.Token t = loginAfterIdentity(username, password);
         creditKey = "";
         return t;
@@ -102,6 +128,9 @@ class XunleiApi {
     Models.Token loginWithRefreshToken(String refreshToken, String persistedDeviceId) throws Exception {
         configureIdentity((persistedDeviceId == null || persistedDeviceId.isBlank())
                 ? md5("xunlei-vr-player|" + refreshToken) : persistedDeviceId);
+        // A signin captcha token belongs to the previous access-token/session state.
+        captchaToken = "";
+        creditKey = "";
         JSONObject body = new JSONObject();
         body.put("grant_type", "refresh_token");
         body.put("refresh_token", refreshToken);
@@ -109,6 +138,7 @@ class XunleiApi {
         body.put("client_secret", CLIENT_SECRET);
         JSONObject o = requestJson("POST", USER_API + "/auth/token", body, false, null, null);
         Models.Token t = Models.Token.fromJson(o);
+        if (t.userId == null || t.userId.isBlank()) t.userId = o.optString("sub", "");
         if (t.accessToken.isBlank()) throw new Exception("刷新登录失败：迅雷没有返回 access_token");
         if (t.refreshToken.isBlank()) t.refreshToken = refreshToken;
         token = t;
@@ -171,20 +201,62 @@ class XunleiApi {
         } else {
             meta.put("username", username);
         }
-
-        JSONObject body = new JSONObject();
-        body.put("action", "POST:/v1/auth/signin/token");
-        body.put("captcha_token", captchaToken == null ? "" : captchaToken);
-        body.put("client_id", CLIENT_ID);
-        body.put("device_id", deviceId);
-        body.put("meta", meta);
-        body.put("redirect_uri", "xlaccsdk01://xunlei.com/callback?state=harbor");
-
-        JSONObject resp = requestJson("POST", USER_API + "/shield/captcha/init", body, false, null, null);
+        JSONObject resp = initCaptchaToken("POST:/v1/auth/signin/token", meta, true);
         String verifyUrl = resp.optString("url", "");
         if (!verifyUrl.isBlank()) throw new VerificationRequiredException(verifyUrl);
-        captchaToken = resp.optString("captcha_token", "");
-        if (captchaToken.isBlank()) throw new Exception("迅雷没有返回 captcha_token");
+    }
+
+    /** Refresh captcha token for an authenticated API action, mirroring OpenList. */
+    private void refreshCaptchaTokenForAction(String method, String urlStr) throws Exception {
+        ensureLoggedIn();
+        String userId = token.userId == null ? "" : token.userId;
+        if (userId.isBlank()) {
+            throw new Exception("迅雷返回的 token 缺少 user_id，无法刷新验证码状态");
+        }
+
+        JSONObject meta = new JSONObject();
+        meta.put("client_version", CLIENT_VERSION);
+        meta.put("package_name", XL_PACKAGE);
+        meta.put("user_id", userId);
+        String timestamp = String.valueOf(System.currentTimeMillis());
+        meta.put("timestamp", timestamp);
+        meta.put("captcha_sign", buildCaptchaSign(timestamp));
+
+        JSONObject resp = initCaptchaToken(getAction(method, urlStr), meta, true);
+        String verifyUrl = resp.optString("url", "");
+        if (!verifyUrl.isBlank()) throw new VerificationRequiredException(verifyUrl);
+    }
+
+    /**
+     * Initializes/refreshes a captcha token.  If Xunlei rejects the previous captcha
+     * token itself, clear it and retry once from a clean state.
+     */
+    private JSONObject initCaptchaToken(String action, JSONObject meta, boolean retryWithoutOldToken) throws Exception {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            JSONObject body = new JSONObject();
+            body.put("action", action);
+            body.put("captcha_token", captchaToken == null ? "" : captchaToken);
+            body.put("client_id", CLIENT_ID);
+            body.put("device_id", deviceId);
+            body.put("meta", meta == null ? new JSONObject() : meta);
+            body.put("redirect_uri", "xlaccsdk01://xunlei.com/callback?state=harbor");
+            try {
+                JSONObject resp = requestJson("POST", USER_API + "/shield/captcha/init", body, false, null, null);
+                String next = resp.optString("captcha_token", "");
+                if (!next.isBlank()) captchaToken = next;
+                if (captchaToken == null || captchaToken.isBlank()) {
+                    throw new Exception("迅雷没有返回 captcha_token");
+                }
+                return resp;
+            } catch (CaptchaInvalidException e) {
+                if (attempt == 0 && retryWithoutOldToken && captchaToken != null && !captchaToken.isBlank()) {
+                    captchaToken = "";
+                    continue;
+                }
+                throw e;
+            }
+        }
+        throw new Exception("迅雷验证码状态刷新失败");
     }
 
     private Models.Token exchangeSessionForToken(String sessionId) throws Exception {
@@ -196,6 +268,7 @@ class XunleiApi {
 
         JSONObject o = requestJson("POST", USER_API + "/auth/signin/token", body, false, null, null);
         Models.Token t = Models.Token.fromJson(o);
+        if (t.userId == null || t.userId.isBlank()) t.userId = o.optString("sub", "");
         if (t.accessToken.isBlank()) throw new Exception("登录失败：迅雷没有返回 access_token");
         token = t;
         pendingSessionId = "";
@@ -257,10 +330,25 @@ class XunleiApi {
 
     private JSONObject requestJson(String method, String urlStr, JSONObject body, boolean auth,
                                    Map<String,String> extraHeaders, String overrideUserAgent) throws Exception {
+        try {
+            return requestJsonOnce(method, urlStr, body, auth, extraHeaders, overrideUserAgent);
+        } catch (CaptchaInvalidException e) {
+            if (!auth) throw e;
+            // The login succeeded; only the action-scoped captcha token is stale.
+            refreshCaptchaTokenForAction(method, urlStr);
+            return requestJsonOnce(method, urlStr, body, true, extraHeaders, overrideUserAgent);
+        }
+    }
+
+    private JSONObject requestJsonOnce(String method, String urlStr, JSONObject body, boolean auth,
+                                       Map<String,String> extraHeaders, String overrideUserAgent) throws Exception {
         JSONObject o = requestJsonRaw(method, urlStr, body, overrideUserAgent, buildHeaders(auth, extraHeaders));
         long errorCode = o.optLong("error_code", 0L);
         String error = o.optString("error", "");
         String desc = o.optString("error_description", "");
+        if (isCaptchaInvalid(o, o.toString())) {
+            throw new CaptchaInvalidException("迅雷验证码状态已过期/无效");
+        }
         if (errorCode != 0 || (!error.isBlank() && !"success".equalsIgnoreCase(error)) || !desc.isBlank()) {
             String url = o.optString("url", "");
             if (!url.isBlank()) throw new VerificationRequiredException(url);
@@ -310,9 +398,23 @@ class XunleiApi {
             o.put("raw", text == null ? "" : text);
         }
         if (code < 200 || code >= 400) {
-            throw new Exception("迅雷接口 HTTP " + code + ": " + compactError(o, text));
+            if (isCaptchaInvalid(o, text)) {
+                throw new CaptchaInvalidException("迅雷接口 HTTP " + code + "：验证码状态无效");
+            }
+            throw new Exception("迅雷接口 HTTP " + code + " [" + getAction(method, urlStr) + "]: " + compactError(o, text));
         }
         return o;
+    }
+
+    private static boolean isCaptchaInvalid(JSONObject o, String raw) {
+        String all = firstNonBlank(
+                o == null ? "" : o.optString("error", ""),
+                o == null ? "" : o.optString("error_description", ""),
+                o == null ? "" : o.optString("errorDesc", ""),
+                o == null ? "" : o.optString("raw", ""),
+                raw == null ? "" : raw).toLowerCase(Locale.ROOT);
+        return all.contains("captcha_invalid") || all.contains("验证码无效") ||
+                all.contains("captcha token invalid") || all.contains("invalid captcha");
     }
 
     private String compactError(JSONObject o, String raw) {
@@ -337,6 +439,21 @@ class XunleiApi {
         int n;
         while ((n = is.read(buf)) >= 0) bos.write(buf, 0, n);
         return bos.toString(StandardCharsets.UTF_8);
+    }
+
+    private static String getAction(String method, String urlStr) {
+        try {
+            String path = new URL(urlStr).getPath();
+            return method + ":" + (path == null || path.isBlank() ? "/" : path);
+        } catch (Exception e) {
+            return method + ":" + urlStr;
+        }
+    }
+
+    private String buildCaptchaSign(String timestamp) {
+        String s = CLIENT_ID + CLIENT_VERSION + XL_PACKAGE + deviceId + timestamp;
+        for (String algorithm : CAPTCHA_ALGORITHMS) s = md5(s + algorithm);
+        return "1." + s;
     }
 
     private static String normalizeDeviceId(String s) {
