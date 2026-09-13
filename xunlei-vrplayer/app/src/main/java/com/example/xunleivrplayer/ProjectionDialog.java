@@ -12,7 +12,12 @@ import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
 
-/** 投影选择/校准面板。所有高级参数都保留，遇到非标准片商参数时仍可手调。 */
+/**
+ * 投影选择/校准面板。
+ *
+ * 这版把“源视频是什么”“左右眼怎么合”“最后怎么摊到手机屏幕”三件事彻底拆开，
+ * 方便在同一帧做真正的 A/B 对比。
+ */
 final class ProjectionDialog {
     interface Callback { void onApply(ProjectionSettings settings); }
 
@@ -31,7 +36,18 @@ final class ProjectionDialog {
             "EAC 3×2"
     };
     private static final String[] STEREO = {"Mono 单目", "SBS 左|右", "SBS 右|左", "TB 上|下", "BT 下|上"};
-    private static final String[] EYES = {"平面观看：取左眼", "平面观看：取右眼"};
+    private static final String[] STEREO_VIEW = {
+            "取左眼（基准）",
+            "取右眼（基准）",
+            "固定中央球壳（快速）",
+            "智能优势眼融合（快速）",
+            "局部视差中央重建（实验）"
+    };
+    private static final String[] OUTPUT = {
+            "普通透视 Rectilinear（基准）",
+            "人眼宽视野混合（减轻边缘拉伸）",
+            "Panini（强力抑制超广角边缘拉伸）"
+    };
     private static final String[] DUAL = {"双鱼眼：左右排列", "双鱼眼：上下排列"};
 
     static void show(Activity a, ProjectionSettings initial, Callback cb) {
@@ -42,28 +58,50 @@ final class ProjectionDialog {
         root.setPadding(pad, pad, pad, pad);
 
         TextView tip = new TextView(a);
-        tip.setText("投影和左右眼布局是两件事。日本 VR 片源不确定时建议先试 ERP 180° + SBS。播放器已自动修正 Android 视频纹理上下方向；只有特殊片源才需要手动翻转。");
+        tip.setText("实验顺序建议：先固定双目处理，只切换平面投影；再固定平面投影，只切换双目处理。这样能分清“边缘拉伸”和“左右眼视差”分别改善了多少。自动 Metadata 模式由 Media3 接管，不使用下面的自研融合算法。");
         root.addView(tip);
 
         Spinner projection = spinner(a, PROJECTIONS);
         projection.setSelection(projectionIndex(s));
-        addLabeled(a, root, "源视频投影", projection);
+        addLabeled(a, root, "1. 源视频投影", projection);
 
         Spinner stereo = spinner(a, STEREO);
         stereo.setSelection(Math.max(0, Math.min(STEREO.length - 1, s.stereoLayout)));
-        addLabeled(a, root, "立体打包", stereo);
+        addLabeled(a, root, "2. 立体打包", stereo);
 
-        Spinner eye = spinner(a, EYES);
-        eye.setSelection(s.eye == ProjectionSettings.EYE_RIGHT ? 1 : 0);
-        addLabeled(a, root, "普通手机屏幕使用哪只眼", eye);
+        Spinner stereoView = spinner(a, STEREO_VIEW);
+        stereoView.setSelection(stereoViewIndex(s));
+        addLabeled(a, root, "3. 双目处理 / 中影视角", stereoView);
+
+        Spinner output = spinner(a, OUTPUT);
+        output.setSelection(Math.max(0, Math.min(OUTPUT.length - 1, s.outputProjection)));
+        addLabeled(a, root, "4. 手机平面投影", output);
 
         EditText viewFov = number(a, s.viewFovDeg);
         addLabeled(a, root, "虚拟相机 FOV（25–135°）", viewFov);
+
+        TextView stereoAdv = new TextView(a);
+        stereoAdv.setText("双目实验参数（默认值先别动）");
+        stereoAdv.setTextSize(18);
+        stereoAdv.setPadding(0, dp(a, 14), 0, dp(a, 4));
+        root.addView(stereoAdv);
+
+        EditText ipd = number(a, s.stereoIpdMm);
+        addLabeled(a, root, "源双眼基线 / IPD（mm，默认 64）", ipd);
+        EditText shellDepth = number(a, s.shellDepthM);
+        addLabeled(a, root, "固定中央球壳假定距离（m，默认 0.55）", shellDepth);
+        EditText dispRange = number(a, s.disparityRange);
+        addLabeled(a, root, "局部视差搜索范围（0–0.15，默认 0.06）", dispRange);
+        EditText smartThreshold = number(a, s.smartThreshold);
+        addLabeled(a, root, "智能融合颜色差阈值（0.02–0.40）", smartThreshold);
+        EditText paniniD = number(a, s.paniniD);
+        addLabeled(a, root, "Panini d（0.1–3.0，默认 1.0）", paniniD);
+
         EditText fishFov = number(a, s.fisheyeFovDeg);
         addLabeled(a, root, "鱼眼有效 FOV（度）", fishFov);
 
         TextView adv = new TextView(a);
-        adv.setText("高级校正（默认值通常不用改）");
+        adv.setText("源视频高级校正（默认值通常不用改）");
         adv.setTextSize(18);
         adv.setPadding(0, dp(a, 14), 0, dp(a, 4));
         root.addView(adv);
@@ -97,7 +135,7 @@ final class ProjectionDialog {
 
         ScrollView scroll = new ScrollView(a); scroll.addView(root);
         AlertDialog dlg = new AlertDialog.Builder(a)
-                .setTitle("VR 投影模式")
+                .setTitle("VR 投影 / 双目实验")
                 .setView(scroll)
                 .setNegativeButton("取消", null)
                 .setPositiveButton("应用", null)
@@ -107,8 +145,14 @@ final class ProjectionDialog {
                 int pi = projection.getSelectedItemPosition();
                 applyProjectionIndex(s, pi, parse(fishFov, s.fisheyeFovDeg));
                 s.stereoLayout = stereo.getSelectedItemPosition();
-                s.eye = eye.getSelectedItemPosition() == 1 ? ProjectionSettings.EYE_RIGHT : ProjectionSettings.EYE_LEFT;
+                applyStereoViewIndex(s, stereoView.getSelectedItemPosition());
+                s.outputProjection = output.getSelectedItemPosition();
                 s.viewFovDeg = clamp(parse(viewFov, s.viewFovDeg), 25f, 135f);
+                s.stereoIpdMm = clamp(parse(ipd, s.stereoIpdMm), 20f, 120f);
+                s.shellDepthM = clamp(parse(shellDepth, s.shellDepthM), 0.08f, 10f);
+                s.disparityRange = clamp(parse(dispRange, s.disparityRange), 0f, 0.15f);
+                s.smartThreshold = clamp(parse(smartThreshold, s.smartThreshold), 0.02f, 0.40f);
+                s.paniniD = clamp(parse(paniniD, s.paniniD), 0.1f, 3f);
                 s.fisheyeFovDeg = clamp(s.fisheyeFovDeg, 90f, 260f);
                 s.sourceFlipX = flipX.isChecked();
                 s.sourceFlipY = flipY.isChecked();
@@ -124,6 +168,21 @@ final class ProjectionDialog {
             }
         }));
         dlg.show();
+    }
+
+    private static int stereoViewIndex(ProjectionSettings s) {
+        if (s.stereoViewMode == ProjectionSettings.STEREO_SHELL) return 2;
+        if (s.stereoViewMode == ProjectionSettings.STEREO_SMART) return 3;
+        if (s.stereoViewMode == ProjectionSettings.STEREO_DISPARITY) return 4;
+        return s.eye == ProjectionSettings.EYE_RIGHT ? 1 : 0;
+    }
+
+    private static void applyStereoViewIndex(ProjectionSettings s, int i) {
+        if (i == 0) { s.stereoViewMode = ProjectionSettings.STEREO_EYE; s.eye = ProjectionSettings.EYE_LEFT; }
+        else if (i == 1) { s.stereoViewMode = ProjectionSettings.STEREO_EYE; s.eye = ProjectionSettings.EYE_RIGHT; }
+        else if (i == 2) s.stereoViewMode = ProjectionSettings.STEREO_SHELL;
+        else if (i == 3) s.stereoViewMode = ProjectionSettings.STEREO_SMART;
+        else s.stereoViewMode = ProjectionSettings.STEREO_DISPARITY;
     }
 
     private static int projectionIndex(ProjectionSettings s) {
