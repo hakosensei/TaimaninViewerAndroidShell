@@ -37,6 +37,9 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Normalize Java override annotations
+        run: find app/src/main/java -name '*.java' -type f -exec sed -i 's/@Override //g' {} +
+
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
 
