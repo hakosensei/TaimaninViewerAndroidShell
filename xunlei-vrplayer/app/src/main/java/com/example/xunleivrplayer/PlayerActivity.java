@@ -25,6 +25,7 @@ import androidx.media3.common.Player;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DefaultDataSource;
 import androidx.media3.datasource.DefaultHttpDataSource;
+import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.exoplayer.video.spherical.SphericalGLSurfaceView;
@@ -38,13 +39,12 @@ import java.util.Map;
  *
  * 解码：Android MediaCodec/Media3。
  * 手动投影：本项目的 VrRenderer GLSL。
- * AUTO_METADATA：使用 Media3 的标准 Spherical Video V2 / projection mesh 路径，
- * 用来兼容真正带 Google VR180 mesh metadata 的文件。
+ * AUTO_METADATA：使用 Media3 的标准 Spherical Video V2 / projection mesh 路径。
  */
 @UnstableApi
 public class PlayerActivity extends Activity {
     private static final String E_URL="url", E_UA="ua", E_NAME="name";
-    private static final String E_P="p",E_S="s",E_E="e",E_VF="vf",E_FF="ff",E_CX="cx",E_CY="cy",E_R="r",E_SX="sx",E_SY="sy",E_K1="k1",E_K2="k2",E_K3="k3",E_Y="yaw",E_PI="pitch",E_RO="roll",E_DL="dl",E_DS="ds";
+    private static final String E_P="p",E_S="s",E_E="e",E_VF="vf",E_FF="ff",E_CX="cx",E_CY="cy",E_R="r",E_SX="sx",E_SY="sy",E_K1="k1",E_K2="k2",E_K3="k3",E_Y="yaw",E_PI="pitch",E_RO="roll",E_DL="dl",E_DS="ds",E_FX="flipx",E_FY="flipy";
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private ExoPlayer player;
@@ -71,6 +71,7 @@ public class PlayerActivity extends Activity {
         i.putExtra(E_VF,s.viewFovDeg); i.putExtra(E_FF,s.fisheyeFovDeg); i.putExtra(E_CX,s.fishCenterX); i.putExtra(E_CY,s.fishCenterY); i.putExtra(E_R,s.fishRadius);
         i.putExtra(E_SX,s.fishScaleX); i.putExtra(E_SY,s.fishScaleY); i.putExtra(E_K1,s.fishK1); i.putExtra(E_K2,s.fishK2); i.putExtra(E_K3,s.fishK3);
         i.putExtra(E_Y,s.sourceYawDeg); i.putExtra(E_PI,s.sourcePitchDeg); i.putExtra(E_RO,s.sourceRollDeg); i.putExtra(E_DL,s.dualLensLayout); i.putExtra(E_DS,s.dualLensSwap);
+        i.putExtra(E_FX,s.sourceFlipX); i.putExtra(E_FY,s.sourceFlipY);
     }
     private static ProjectionSettings readSettings(Intent i) {
         ProjectionSettings s=new ProjectionSettings();
@@ -78,6 +79,7 @@ public class PlayerActivity extends Activity {
         s.viewFovDeg=i.getFloatExtra(E_VF,s.viewFovDeg); s.fisheyeFovDeg=i.getFloatExtra(E_FF,s.fisheyeFovDeg); s.fishCenterX=i.getFloatExtra(E_CX,s.fishCenterX); s.fishCenterY=i.getFloatExtra(E_CY,s.fishCenterY); s.fishRadius=i.getFloatExtra(E_R,s.fishRadius);
         s.fishScaleX=i.getFloatExtra(E_SX,s.fishScaleX); s.fishScaleY=i.getFloatExtra(E_SY,s.fishScaleY); s.fishK1=i.getFloatExtra(E_K1,s.fishK1); s.fishK2=i.getFloatExtra(E_K2,s.fishK2); s.fishK3=i.getFloatExtra(E_K3,s.fishK3);
         s.sourceYawDeg=i.getFloatExtra(E_Y,s.sourceYawDeg); s.sourcePitchDeg=i.getFloatExtra(E_PI,s.sourcePitchDeg); s.sourceRollDeg=i.getFloatExtra(E_RO,s.sourceRollDeg); s.dualLensLayout=i.getIntExtra(E_DL,s.dualLensLayout); s.dualLensSwap=i.getBooleanExtra(E_DS,s.dualLensSwap);
+        s.sourceFlipX=i.getBooleanExtra(E_FX,s.sourceFlipX); s.sourceFlipY=i.getBooleanExtra(E_FY,s.sourceFlipY);
         return s;
     }
 
@@ -128,10 +130,24 @@ public class PlayerActivity extends Activity {
     }
 
     private void createPlayer() {
-        DefaultHttpDataSource.Factory http=new DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true).setUserAgent((ua==null||ua.isEmpty())?"XunleiVRPlayer/2.0":ua);
+        DefaultHttpDataSource.Factory http=new DefaultHttpDataSource.Factory()
+                .setAllowCrossProtocolRedirects(true)
+                .setUserAgent((ua==null||ua.isEmpty())?"XunleiVRPlayer/2.0":ua);
         if(ua!=null&&!ua.isEmpty()) { Map<String,String> h=new HashMap<>(); h.put("User-Agent",ua); http.setDefaultRequestProperties(h); }
         DefaultDataSource.Factory ds=new DefaultDataSource.Factory(this,http);
-        player=new ExoPlayer.Builder(this).setMediaSourceFactory(new DefaultMediaSourceFactory(ds)).build();
+
+        // High-bitrate VR sources are much less forgiving of brief CDN/Wi-Fi dips than
+        // ordinary 1080p video. Keep substantially more forward media buffered, and
+        // require a deeper buffer before resuming after an actual underrun.
+        DefaultLoadControl loadControl=new DefaultLoadControl.Builder()
+                .setBufferDurationsMs(20_000,60_000,2_500,7_000)
+                .setBackBuffer(5_000,true)
+                .build();
+
+        player=new ExoPlayer.Builder(this)
+                .setMediaSourceFactory(new DefaultMediaSourceFactory(ds))
+                .setLoadControl(loadControl)
+                .build();
         player.addListener(new Player.Listener(){
             @Override public void onIsPlayingChanged(boolean isPlaying){updatePlayButton();}
             @Override public void onPlayerError(androidx.media3.common.PlaybackException error){Toast.makeText(PlayerActivity.this,"播放失败："+error.getMessage(),Toast.LENGTH_LONG).show();}
@@ -191,7 +207,7 @@ public class PlayerActivity extends Activity {
     }
 
     private final Runnable ticker=new Runnable(){public void run(){
-        if(player!=null&&!seeking&&player.getDuration()>0){long d=player.getDuration(),p=player.getCurrentPosition();seek.setProgress((int)Math.min(1000,p*1000L/Math.max(1,d)));timeText.setText(format(p)+" / "+format(d));}
+        if(player!=null&&!seeking&&player.getDuration()>0){long d=player.getDuration(),p=player.getCurrentPosition();seek.setProgress((int)Math.min(1000,p*1000L/Math.max(1,d)));timeText.setText(format(p)+" / "+format(d)+"  缓冲"+player.getBufferedPercentage()+"%");}
         ui.postDelayed(this,500);
     }};
 
